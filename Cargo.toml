@@ -1,0 +1,8 @@
+[package]
+name = "shmr"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+reed-solomon-erasure = { version = "6.0", features = [ "simd-accel" ] }
+tokio = { version="1.36", features=["full"] }
