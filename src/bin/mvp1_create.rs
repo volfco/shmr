@@ -8,6 +8,7 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::time::Instant;
 use std::path::PathBuf;
+use std::vec;
 use shmr::{BlockTopology, Topology};
 
 
@@ -36,7 +37,13 @@ fn main () {
             break;
         }
 
-        let mut shards = buffer.chunks(shard_size).map(|x| {
+        // only read the amount of data that was read into the buffer
+        let buf_content = &buffer[..n]; 
+
+        // creating the 2d array of shards
+        let mut shards = buf_content.chunks(shard_size).map(|x| {
+            // pad with zeroes if it's not the right size
+            // this is because the last shard might be a bit smaller than the rest
             let mut r = x.to_vec();
             if r.len() < shard_size {
                 r.resize(shard_size, 0);
@@ -44,12 +51,9 @@ fn main () {
             r
         }).collect::<Vec<_>>();
 
-        // add in space for the parity shards
+        // add empty parity shards
         for _ in 0..parity_shards {
-            let mut shard = Vec::new();
-            shard.resize(shard_size, 0);
-
-            shards.push(shard);
+            shards.push(vec![0; shard_size]);
         }
 
         let start = Instant::now();
