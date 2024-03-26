@@ -1,11 +1,33 @@
+use std::path::PathBuf;
 
-struct Block {
-    /// lightweight hash of the block
-    /// used to quickly check if the contents of the block have been changed
-    pub hash: Vec<u8>,
+use serde::{Deserialize, Serialize};
 
-    pub topology: (u8, u8),
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum Topology {
+    /// Mirror (n copies)
+    Mirror(u8),
+    /// Reed-Solomon (data, parity)
+    ReedSolomon(usize, usize),
 }
-struct INode {
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FileTopology {
+    pub uuid: String,
+    pub name: Vec<u8>,  
+    pub size: usize,
+    pub topology: Topology,  
+
+    /// Block Size, in bytes
+    pub block_size: u32,
+    /// Blocks
+    pub blocks: Vec<BlockTopology>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct BlockTopology {
+    pub block: usize,
+    pub hash: Vec<u8>,
+    pub size: usize,
+    pub layout: (u8, u8),
+    pub shards: Vec<PathBuf>,
 }
