@@ -17,13 +17,11 @@ fn main () {
     let mut output = File::create("output.bin").unwrap();
 
     for block in file_layout.blocks {
-
+        let shard_size = (block.size as f32 / block.layout.0 as f32).ceil() as usize;
 
         // because we know the layout of the shards, we only have to read in the first three shards. 
         // the last two shards are parity shards. we don't need to read them in if all the data shards are intact.
-        // ... but eventually we will be doing the loading in parallel. So it's not a big deal.
-
-        let shard_size = (block.size as f32 / block.layout.0 as f32).ceil() as usize;
+        // ... but eventually we will be doing the loading in parallel. So it's not a big deal.        
 
         let mut shards: Vec<Option<Vec<u8>>> = block.shards.iter().map(|path| {
 
@@ -36,7 +34,7 @@ fn main () {
             println!("Reading file {:?}", path);
 
             let mut file = File::open(path).unwrap();
-            let mut buffer = Vec::with_capacity(block.size);
+            let mut buffer = Vec::with_capacity(shard_size);
             file.read_to_end(&mut buffer).unwrap();
 
             Some(buffer)
@@ -63,10 +61,11 @@ fn main () {
         shards.truncate(block.layout.0.into());
 
         // create a buffer the size of the n data shards
-        let mut buffer = vec![0; shard_size * block.layout.0 as usize];
+        let mut buffer = vec![];
 
         for shard in shards {
-            buffer.write_all(&shard.unwrap()).unwrap();
+            let shard = shard.unwrap();
+            buffer.write_all(&shard).unwrap();
         }
 
         // we need to do this, because we might have had to padd the last shard with zeros to make it the same size as the others
