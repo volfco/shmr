@@ -9,10 +9,42 @@ use std::io::{Read, Write};
 use std::time::Instant;
 use std::path::PathBuf;
 use std::vec;
-use shmr::{BlockTopology, Topology};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum Topology {
+    /// Mirror (n copies)
+    Mirror(u8),
+    /// Reed-Solomon (data, parity)
+    ReedSolomon(usize, usize),
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FileTopology {
+    pub uuid: String,
+    pub name: Vec<u8>,
+    pub size: usize,
+    pub topology: Topology,
+
+    /// Block Size, in bytes
+    pub block_size: u32,
+    /// Blocks
+    pub blocks: Vec<BlockTopology>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct BlockTopology {
+    pub block: usize,
+    pub hash: Vec<u8>,
+    pub size: usize,
+    pub layout: (u8, u8),
+    pub shards: Vec<PathBuf>,
+}
 
 
 fn main () {
+    let start_time = Instant::now();
+
     let data_shards = 3;
     let parity_shards = 2;
 
@@ -61,7 +93,7 @@ fn main () {
         r.encode(&mut shards).unwrap();
 
         let duration = start.elapsed();
-        println!("Encoding duration: {:?}", duration);
+        // println!("Encoding duration: {:?}", duration);
 
         let mut shard_paths = Vec::new();
 
@@ -87,7 +119,7 @@ fn main () {
         i += 1;
     }
 
-    let file_topology = shmr::FileTopology {
+    let file_topology = FileTopology {
         uuid: "1234".to_string(),
         name: "test.bin".as_bytes().to_vec(),
         topology: Topology::ReedSolomon(data_shards, parity_shards),
@@ -99,4 +131,7 @@ fn main () {
     let shmr_data = serde_json::to_string(&file_topology).unwrap();
     let mut shmr_file = File::create("test.shmr").unwrap();
     shmr_file.write_all(shmr_data.as_bytes()).unwrap();
+
+    let duration = start_time.elapsed();
+    println!("Total duration: {:?}", duration);
 }
