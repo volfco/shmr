@@ -1,14 +1,14 @@
 #![feature(trivial_bounds)]
 pub mod topology;
+mod fuse;
 
 use std::collections::HashMap;
-use std::ffi::OsStr;
 use std::path::PathBuf;
 
-use fuser::{Filesystem, ReplyCreate, Request};
 use rkyv::{Archive, Deserialize, Serialize};
 use std::process::Command;
 use std::str;
+use crate::topology::Superblock;
 
 
 #[derive(Debug, Archive, Serialize, Deserialize, Clone)]
@@ -38,22 +38,22 @@ impl StorageVolume {
     }
 }
 
-#[derive(Debug, Archive, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone)]
 pub struct ConfigStub {
     pub mount: String,
-    pub workspace: String,
+    pub workspace: PathBuf,
     pub archives: HashMap<String, StorageVolume>,
     pub encoding: (u8, u8),
     pub drive_replacements: Vec<DriveReplacements>,
 }
 
-#[derive(Debug, Archive, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone)]
 pub struct DriveReplacements {
     pub old: Vec<String>,
     pub new: Vec<String>
 }
 
-#[derive(Debug, Archive, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone)]
 pub struct Config {
     pub stub: ConfigStub,
     pub archives: HashMap<String, String>
@@ -61,18 +61,11 @@ pub struct Config {
 
 /// ShmrFilesystem
 pub struct ShmrFilesystem {
-    // pub config: RunningConfig,
-    pub direct_io: bool,
-    // pub suid_support: bool,
+    config: Config,
+    superblock: Superblock,
+
+    atime: bool
+
 }
-
-impl Filesystem for ShmrFilesystem {
-    fn create(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, mode: u32, umask: u32, flags: i32, reply: ReplyCreate) {
-        todo!()
-
-        // check if the file exists
-        // if not, create it with the given mode
-
-        // open the file
-    }
+impl ShmrFilesystem {
 }
