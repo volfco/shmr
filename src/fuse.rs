@@ -1,11 +1,12 @@
 use std::ffi::OsStr;
 use std::os::unix::prelude::OsStrExt;
 use fuser::{FileAttr, Filesystem, KernelConfig, ReplyDirectory, ReplyDirectoryPlus, ReplyEmpty, ReplyEntry, ReplyOpen, Request};
-use log::debug;
+use log::{debug, warn};
 use crate::ShmrFilesystem;
-use crate::topology::{InodeAttributes, InodeDescriptor};
+use crate::topology::{FileAttributes, IFileType, InodeAttributes, InodeDescriptor};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+/// ShmrFilesystem
 
 const MAX_NAME_LENGTH: u32 = 255;
 const MAX_FILE_SIZE: u64 = 1024 * 1024 * 1024 * 1024;
@@ -22,6 +23,7 @@ impl Filesystem for ShmrFilesystem {
   /// Called before any other filesystem method. The kernel module connection can be configured
   /// using the KernelConfig object
   fn init(&mut self, _req: &Request<'_>, config: &mut KernelConfig) -> Result<(), libc::c_int> {
+    // self.superblock = Superblock::open()?;
     todo!()
   }
 
@@ -42,31 +44,31 @@ impl Filesystem for ShmrFilesystem {
       return;
     }
 
-    let parent_inode = self.superblock.read_inode(&parent).unwrap();
-    if !parent_inode.check_access(req.uid(), req.gid(), libc::X_OK ) {
-      debug!("access denied to parent inode {}", parent);
-      reply.error(libc::EACCES);
-      return;
-    }
+    let parent_inode = self.superblock.inode_pread(&parent, req.uid(), req.gid(), libc::X_OK).unwrap();
 
-    // check if the inode is a directory, if not return an ENOTDIR error
-    if let InodeDescriptor::Directory(_attrs, directory) = parent_inode {
-      // attempt to find the inode for the given name
-      if let Some(inode) = directory.get(name.as_bytes()) {
-        match self.superblock.read_inode(inode) {
-          // todo populate the generation field correctly
+    if let IFileType::Directory = parent_inode.kind {
+      // read the directory
+      let contents = match self.superblock.directory_read(&parent) {
+        Ok(tree) => tree,
+        Err(e) => {
+          warn!("error reading directory: {:?}", e);
+          reply.error(libc::ENOENT);
+          return;
+        }
+      };
+
+      // check if the directory contains the name
+      if let Some(inode) = contents.get(name.as_bytes()) {
+        match self.superblock.inode_read(inode) {
           Ok(inode) => {
-            let attr: FileAttr = inode.get_attributes().into();
+            let attr: FileAttr = inode.into();
             reply.entry(&Duration::new(0, 0), &attr, 0)
           },
           Err(_) => reply.error(libc::ENOENT),
         }
       } else {
-        // if the inode is not found, return an ENOENT error
         reply.error(libc::ENOENT);
       }
-    } else {
-      reply.error(libc::ENOTDIR);
     }
   }
 
@@ -79,82 +81,141 @@ impl Filesystem for ShmrFilesystem {
       return;
     }
 
-    // todo ensure the parent inode exists
-    let mut parent_inode = match self.superblock.read_inode(&parent) {
-      Ok(inode) => if !inode.check_access(req.uid(), req.gid(), libc::X_OK ) {
-        debug!("access denied to parent inode {}", parent);
-        reply.error(libc::EACCES);
-        return;
-      } else {
-        inode
-      }
+    let mut parent_attr = match self.superblock.inode_pread(&parent, req.uid(), req.gid(), libc::X_OK) {
+      Ok(inode) => inode,
       Err(e) => {
-        debug!("error reading parent inode: {:?}", e);
         reply.error(e);
         return;
       }
     };
 
-    match &mut parent_inode {
-      InodeDescriptor::Directory(attrs, directory) => {
-        if directory.get(name.as_bytes()).is_some() {
-          reply.error(libc::EEXIST);
-          return;
-        }
-        attrs.last_modified = time_now();
-        attrs.last_metadata_changed = time_now();
-        // if self.atime {
-        //   attrs.last_accessed = time_now();
-        // }
-      },
-      _ => {
-        reply.error(libc::ENOTDIR);
+    if !matches!(parent_attr.kind, IFileType::Directory) {
+      reply.error(libc::ENOTDIR);
+      return;
+    }
+
+    // check if the directory already exists before we write the new child inode
+    match self.superblock.directory_contains(&parent, &name.as_bytes().to_vec()) {
+      Ok(true) => {
+        reply.error(libc::EEXIST);
         return;
-      }
+      },
+      Err(e) => {
+        reply.error(e);
+        return;
+      },
+      _ => {},
     }
 
     // before updating the parent inode, create the child inode first.
     // so if this fails, all we have is an orphaned inode and not a modified directory without the
     // underlying inode
 
-    let attr = InodeAttributes {
-      open_file_handles: 0,
-      last_accessed: time_now(),
-      last_modified: time_now(),
-      last_metadata_changed: time_now(),
-      mode,
-      hardlinks: 0,
-      uid: 0,
-      gid: 0,
-      xattrs: Default::default(),
+    let gid = if parent_attr.perm & libc::S_ISGID as u16 != 0 {
+      parent_attr.gid
+    } else {
+      req.gid()
     };
-    let descriptor = InodeDescriptor::Directory(attr.clone(), Default::default());
+    let attrs = FileAttributes {
+      ino: 0,
+      size: 512,
+      blksize: 512,
+      blocks: 1,
 
-    let file_attr = match self.superblock.create_inode(descriptor) {
-      Ok(inode) => {
-        self.superblock.get_fileattr(&inode).unwrap()
-      },
+      atime: time_now(),
+      mtime: time_now(),
+      ctime: time_now(),
+      crtime: time_now(), // mac os only, which we don't care about
+      kind: IFileType::Directory,
+
+      perm: mode as u16,
+      nlink: 2,  // Directories start with link count of 2, since they have a self link
+      uid: req.uid(),
+      gid,
+
+      rdev: 0,
+      flags: 0,
+    };
+
+    let child_inode = match self.superblock.inode_create(&attrs) {
+      Ok(inode) => inode,
       Err(_) => {
         reply.error(libc::ENOENT);
         return;
       },
     };
 
+    // create the DirectoryDescriptor
+    self.superblock.directory_create(&parent, &child_inode).unwrap();
+
+    // now that the child inode has been created successfully we can update the parent directory
+    parent_attr.mtime = time_now();
+    // parent_attr.atime = time_now();
+    parent_attr.ctime = time_now();
+
     // TODO Ideally this should be done in a transaction
     // update parent inode
-    if let Err(e) = self.superblock.update_inode(&parent, parent_inode) {
+    if let Err(e) = self.superblock.inode_update(&parent, &parent_attr) {
       debug!("error updating parent inode: {:?}", e);
       reply.error(libc::EIO);
       return;
     }
 
-    reply.entry(&Duration::new(0, 0), &file_attr, 0);
+    // update the parent's directory entries to include the one we just made
+    self.superblock.directory_entry_insert(&parent, name.as_bytes().to_vec(), &child_inode).unwrap();
 
+    reply.entry(&Duration::new(0, 0), &attrs.into(), 0);
   }
 
   /// Remove a directory.
-  fn rmdir(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: ReplyEmpty) {
-    todo!()
+  fn rmdir(&mut self, req: &Request<'_>, parent: u64, name: &OsStr, reply: ReplyEmpty) {
+    let mut parent_attr = match self.superblock.inode_pread(&parent, req.uid(), req.gid(), libc::X_OK) {
+      Ok(inode) => inode,
+      Err(e) => {
+        reply.error(e);
+        return;
+      }
+    };
+
+    if !matches!(parent_attr.kind, IFileType::Directory) {
+      reply.error(libc::ENOTDIR);
+      return;
+    }
+
+    // TODO check if we can write to the parent directory
+
+    // ensure that the target of removal actually exists and is empty
+    match self.superblock.directory_get_entry(&parent, &name.as_bytes().to_vec()) {
+      Ok(inode) => match inode {
+        // directory does not exist
+        None => {
+          reply.error(libc::ENOENT);
+          return;
+        }
+        // it does exist!
+        Some(inode) => match self.superblock.directory_read(&inode) {
+          Ok(tree) => {
+            if !tree.is_empty() {
+              reply.error(libc::ENOTEMPTY);
+              return;
+            }
+            // remove the directory entry from the parent directory, orphaning the inode and inode_ds
+            self.superblock.directory_entry_remove(&parent, &name.as_bytes().to_vec()).unwrap();
+
+            // delete the directory inode and it's descriptor
+            self.superblock.inode_remove(&inode).unwrap();
+          }
+          Err(e) => {
+            reply.error(e);
+            return;
+          }
+        },
+      }
+      Err(e) => {
+        reply.error(e);
+        return;
+      }
+    }
   }
 
   /// Open a directory.

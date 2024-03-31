@@ -1,6 +1,6 @@
 #![feature(trivial_bounds)]
 pub mod topology;
-mod fuse;
+pub mod fuse;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -59,7 +59,6 @@ pub struct Config {
     pub archives: HashMap<String, String>
 }
 
-/// ShmrFilesystem
 pub struct ShmrFilesystem {
     config: Config,
     superblock: Superblock,

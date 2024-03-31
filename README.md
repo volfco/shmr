@@ -1,8 +1,5 @@
-A Purpose Built psuedo-raid-filesystem for use with SMR Hard Drives. 
+A Purpose Built filesystem for use with SMR Hard Drives. 
 
-Uses a (presumably) SSD as a write-cache, where data is stored until it is written to the underlying harddrives. 
-
-Using FUSE, shmr presents a single virtual filesystem. 
 
 
 
@@ -19,28 +16,10 @@ Using FUSE, shmr presents a single virtual filesystem.
 
 ## thingies
 - If the block size does not divide evenly into the required number of data shards, the end of the last data shard is zero filled
+- 
 
-
-## on disk 
-```text
-/mnt/md0/workspace              Shmr Workspace Directory
-  
-  /io/[UUID].[Block ID].bin     IO File where writes are written to
-
-/mnt/archives/disk0
-  /metadata/                fjall metadata database directory
-  /uu/id/uuid               file directory
-    /[Block ID]                 Block Directory
-      /[Shard ID].bin               Shard File
-      
+## sled keyspace
+```plaintext
+shmr_0..n      inode file attributes
+shmr_0..n_ds   FileDescriptor or DirectoryDescriptor, based on inode file attributes
 ```
-
-##
-```text
-/proc/shmr              Shmr info in text format
-/proc/shmr.json         Shmr info in json format
-```
-  
-
-## engines
-### 
