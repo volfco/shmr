@@ -1,10 +1,10 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use fuser::FileAttr;
+use fuser::{FileAttr, FUSE_ROOT_ID};
 use rkyv::{Archive, Deserialize, Serialize};
 use anyhow::{Context, Result};
 use libc::c_int;
-use log::{error};
+use log::{debug, error, info, trace};
 use crate::ConfigStub;
 
 type Inode = u64;
@@ -146,16 +146,48 @@ impl From<FileAttributes> for FileAttr {
   }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Superblock {
   pub(crate) db: sled::Db,
 }
 
 impl Superblock {
   pub fn open(config: &ConfigStub) -> Result<Self> {
-    Ok(Self {
-      db: sled::open(config.workspace.join("superblock.db"))?,
-    })
+    let path = config.workspace.join("superblock.db");
+
+    debug!("Opening superblock at {:?}", &path);
+    let db = sled::open(path)?;
+
+    let supa = Self {
+      db,
+    };
+
+    // check if the 0 inode exists. if not, we're on a fresh filesystem and we need to do some basic initialization
+    if !supa.inode_exists(&FUSE_ROOT_ID)? {
+      info!("Initializing filesystem");
+
+      // create the root inode
+      supa.inode_update(&FUSE_ROOT_ID, &FileAttributes {
+        ino: FUSE_ROOT_ID,
+        size: 0,
+        blocks: 0,
+        atime: crate::time_now(),
+        mtime: crate::time_now(),
+        ctime: crate::time_now(),
+        crtime: crate::time_now(),
+        kind: IFileType::Directory,
+        perm: 0o755,
+        nlink: 1,
+        uid: 0,
+        gid: 0,
+        rdev: 0,
+        blksize: 0,
+        flags: 0,
+      }).unwrap(); // todo this is fucky
+
+      supa.directory_create(&FUSE_ROOT_ID, &FUSE_ROOT_ID)?;
+    }
+    Ok(supa)
   }
 
   fn inode_names(&self, inode: &Inode) -> (Vec<u8>, Vec<u8>) {
@@ -169,6 +201,10 @@ impl Superblock {
     self.db.generate_id().map_err(|_e| libc::EIO)
   }
 
+  pub fn inode_exists(&self, inode: &Inode) -> Result<bool> {
+    Ok(self.db.contains_key(self.inode_names(inode).0)?)
+  }
+
   pub fn inode_create(&self, descriptor: &FileAttributes) -> Result<Inode, c_int> {
     let inode = self.gen_inode()?;
     self.inode_update(&inode, descriptor)?;
@@ -176,6 +212,8 @@ impl Superblock {
   }
 
   pub fn inode_read(&self, inode: &Inode) -> Result<FileAttributes, c_int> {
+    trace!("reading inode {}", inode);
+
     // todo does format have any performance implications?
     // get the InodeDescriptor from the database
     let op = match self.db.get(self.inode_names(inode).0) {
@@ -204,6 +242,7 @@ impl Superblock {
   }
 
   pub fn inode_update(&self, inode: &Inode, descriptor: &FileAttributes) -> Result<(), c_int> {
+    trace!("Updating inode {}. Contents: {:?}", inode, descriptor);
     let pos = rkyv::to_bytes::<_, 256>(descriptor).map_err(|_e| libc::EIO)?;
     let _ = self.db.insert(self.inode_names(inode).0, &pos[..]).map_err(|_e| libc::EIO)?;
     Ok(())
@@ -253,6 +292,7 @@ impl Superblock {
   // Directory Operations
   /// Read the contents of a directory inode
   pub fn directory_read(&self, inode: &Inode) -> Result<DirectoryDescriptor, c_int> {
+    // todo add a LRU cache to reduce the number of reads on disk... maybe?
     let raw = self.db.get(self.inode_names(inode).1).map_err(|_e| libc::EIO )?;
 
     if raw.is_none() {
@@ -273,6 +313,10 @@ impl Superblock {
   /// Create a Directory with the Given Inode
   /// Parent is specified to add the `..` entry
   pub fn directory_create(&self, parent: &Inode, inode: &Inode) -> Result<()> {
+    if !self.inode_exists(inode)? {
+      panic!("Attempting to create a directory with an inode that does not exist");
+    }
+
     // populate the directory with the current directory and parent directory entries
     let mut directory: DirectoryDescriptor = BTreeMap::new();
     directory.insert(".".as_bytes().to_vec(), *inode);
@@ -280,6 +324,8 @@ impl Superblock {
 
     let pos = rkyv::to_bytes::<_, 256>(&directory).context("Failed to serialize DirectoryDescriptor")?;
     let _ = self.db.insert(self.inode_names(inode).1, &pos[..]).context("Failed to create DirectoryDescriptor")?;
+
+    debug!("created directory with inode {} under {}", inode, parent);
 
     Ok(())
   }
@@ -295,6 +341,7 @@ impl Superblock {
 
   /// Insert a new entry into the given parent directory
   pub fn directory_entry_insert(&self, parent: &Inode, name: Vec<u8>, inode: &Inode) -> Result<(), c_int> {
+    debug!("Inserting entry {:?} -> {} into directory {}", name, inode, parent);
     let mut dir_contents = self.directory_read(parent)?;
     if dir_contents.contains_key(&name) {
       return Err(libc::EEXIST);
@@ -302,11 +349,14 @@ impl Superblock {
 
     dir_contents.insert(name, *inode);
 
+    trace!("Directory contents: {:?}", dir_contents);
+
     let pos = rkyv::to_bytes::<_, 256>(&dir_contents).context("Failed to serialize DirectoryDescriptor").map_err(|_e| libc::EIO)?;
-    let _ = self.db.insert(self.inode_names(inode).1, &pos[..]).context("Failed to update DirectoryDescriptor").map_err(|_e| libc::EIO)?;
+    // we are updating the parent entry, not the one we just created!
+    let _ = self.db.insert(self.inode_names(parent).1, &pos[..]).context("Failed to update DirectoryDescriptor").map_err(|_e| libc::EIO)?;
 
-    self.inode_modified(parent)?;
-
+    // self.inode_modified(parent)?;
+    let _ = self.db.flush();
     Ok(())
   }
 
