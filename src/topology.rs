@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use fuser::{FileAttr, FUSE_ROOT_ID};
 use rkyv::{Archive, Deserialize, Serialize};
@@ -325,7 +325,7 @@ impl Superblock {
     let pos = rkyv::to_bytes::<_, 256>(&directory).context("Failed to serialize DirectoryDescriptor")?;
     let _ = self.db.insert(self.inode_names(inode).1, &pos[..]).context("Failed to create DirectoryDescriptor")?;
 
-    debug!("created directory with inode {} under {}", inode, parent);
+    debug!("created directory descriptor for inode {} under {}", inode, parent);
 
     Ok(())
   }
@@ -378,7 +378,44 @@ impl Superblock {
 
   // Files
 
-  pub fn read_file_topology(&self, inode: &Inode) -> Result<FileAttributes, c_int> {
+  /// Initialize a FileInformation object for the given Inode with an empty Topology
+  pub fn file_initialize(&self, inode: &Inode) -> Result<(), c_int> {
+    if !self.inode_exists(inode).map_err(|_e| libc::EIO)? {
+      panic!("Attempting to create a directory with an inode that does not exist");
+    }
+
+    let fd = FileInformation {
+      inode: *inode,
+      size: 0,
+      block_size: 0,
+      topology: vec![],
+      topology_type: FileTopology::Empty,
+    };
+
+    let pos = rkyv::to_bytes::<_, 256>(&fd).context("Failed to serialize FileInformation").map_err(|_e| libc::EIO)?;
+    let _ = self.db.insert(self.inode_names(inode).1, &pos[..]).context("Failed to create FileInformation").map_err(|_e| libc::EIO)?;
+
+    debug!("created FileInformation for inode {}", inode);
+
+    Ok(())
+  }
+
+  pub fn file_write(&self, inode: &Inode, offet: i64, data: &[u8]) -> Result<usize, c_int> {
+
+    let attrs = self.inode_read(inode)?;
+    let topo = self.read_file_topology(inode)?;
+
+    // todo can the offset be negative?
+    let starting_block = offet / topo.block_size as i64;
+    let block_offset = offet % topo.block_size as i64;
+    trace!("starting block is {} having a block offset of {}", starting_block, block_offset);
+
+
+    todo!()
+
+  }
+
+  pub fn read_file_topology(&self, inode: &Inode) -> Result<FileInformation, c_int> {
     let raw = self.db.get(self.inode_names(inode).1).map_err(|_e| libc::EIO )?;
 
     if raw.is_none() {
@@ -387,11 +424,11 @@ impl Superblock {
     }
 
     let data = raw.unwrap();
-    let archived = rkyv::check_archived_root::<FileAttributes>(&data).unwrap();
+    let archived = rkyv::check_archived_root::<FileInformation>(&data).unwrap();
     match archived.deserialize(&mut rkyv::Infallible) {
       Ok(topology) => Ok(topology),
       Err(e) => {
-        panic!("unable to deserialize FileTopology: {:?}", e);
+        panic!("unable to deserialize FileInformation: {:?}", e);
       }
     }
   }
@@ -411,7 +448,7 @@ check_bytes,
 )]
 /// Describe the contents of the inode entry
 pub enum InodeDescriptor {
-  File(InodeAttributes, FileDescriptor),
+  File(InodeAttributes, FileInformation),
   Directory(InodeAttributes, DirectoryDescriptor),
   Symlink,
 }
@@ -436,6 +473,9 @@ check_bytes,
 /// FileTopology describes the topology of a file. 
 /// This is used to tell Shmr about how to store or reconstruct the file's data.
 pub enum FileTopology {
+  /// Empty, zero length, File.
+  /// Used to denote when a file is empty, or just a placeholder until the file is written to.
+  Empty,
   /// Only store one copy of the block
   Single,
   /// Mirror (n copies)
@@ -475,7 +515,7 @@ impl From<&InodeAttributes> for FileAttr {
 compare(PartialEq),
 check_bytes,
 )]
-pub struct FileDescriptor {
+pub struct FileInformation {
   pub inode: Inode,
 
   /// File Size, in bytes
