@@ -1,10 +1,14 @@
-use std::collections::{BTreeMap};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::collections::{BTreeMap, HashMap};
+use std::fs::OpenOptions;
+use std::io::{Seek, SeekFrom, Write};
+use std::path::PathBuf;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use fuser::{FileAttr, FUSE_ROOT_ID};
 use rkyv::{Archive, Deserialize, Serialize};
 use anyhow::{Context, Result};
 use libc::c_int;
 use log::{debug, error, info, trace};
+use reed_solomon_erasure::galois_8::ReedSolomon;
 use crate::ConfigStub;
 
 type Inode = u64;
@@ -387,7 +391,7 @@ impl Superblock {
     let fd = FileInformation {
       inode: *inode,
       size: 0,
-      block_size: 0,
+      block_size: 4096, // TODO This needs to be dynamic
       topology: vec![],
       topology_type: FileTopology::Empty,
     };
@@ -401,18 +405,7 @@ impl Superblock {
   }
 
   pub fn file_write(&self, inode: &Inode, offet: i64, data: &[u8]) -> Result<usize, c_int> {
-
-    let attrs = self.inode_read(inode)?;
-    let topo = self.read_file_topology(inode)?;
-
-    // todo can the offset be negative?
-    let starting_block = offet / topo.block_size as i64;
-    let block_offset = offet % topo.block_size as i64;
-    trace!("starting block is {} having a block offset of {}", starting_block, block_offset);
-
-
     todo!()
-
   }
 
   pub fn read_file_topology(&self, inode: &Inode) -> Result<FileInformation, c_int> {
@@ -470,7 +463,7 @@ impl InodeDescriptor {
 compare(PartialEq),
 check_bytes,
 )]
-/// FileTopology describes the topology of a file. 
+/// FileTopology describes the topology of a file.
 /// This is used to tell Shmr about how to store or reconstruct the file's data.
 pub enum FileTopology {
   /// Empty, zero length, File.
@@ -515,6 +508,7 @@ impl From<&InodeAttributes> for FileAttr {
 compare(PartialEq),
 check_bytes,
 )]
+// TODO this struct name kinda sucks. rename it to something more descriptive
 pub struct FileInformation {
   pub inode: Inode,
 
@@ -525,6 +519,64 @@ pub struct FileInformation {
   /// Block Topology
   pub topology: Vec<BlockTopology>,
   pub topology_type: FileTopology,
+}
+impl FileInformation {
+  /// Read from the given offset
+  // pub fn read(&self, buffer: &mut [u8], offset: i64) -> Result<usize> {
+  //   // figure out which block we are starting at
+  //   let starting_block = offset / self.block_size as i64;
+  //   let block_offset = offset % self.block_size as i64;
+  //
+  //   for block in &self.topology {
+  //     if block.block < starting_block as usize {
+  //       continue;
+  //     }
+  //
+  //     // read the underlying block
+  //
+  //
+  //   }
+  //
+  //   todo!()
+  //
+  // }
+
+  pub fn write(&mut self, config: &ConfigStub, data: &[u8], offset: i64) -> Result<usize> {
+    // offset is where this data should be written in the file, i.e. where the cursor should be placed
+
+    // write the data to the proper block for the given inode
+    let block_path = config.workspace.join("blocks");
+
+    // which block we're writing to
+    let starting_block = match offset > 0 {
+      true => offset / self.block_size as i64,
+      false => 0
+    };
+    let ending_block = ((offset + data.len() as i64) / self.block_size as i64) + 1;
+
+    debug!("Writing {} bytes to block {} ending at block {}", data.len(), starting_block, ending_block);
+
+    for i in starting_block..ending_block {
+      let mut block_offset = 0;
+      if i == starting_block {
+        // we only need to worry about the offset on the first block
+        block_offset = offset % self.block_size as i64;
+      }
+      let path = block_path.join(format!("{}_{}.bin", self.inode, i));
+      trace!("Writing to {:?} at offset {}", path, block_offset);
+
+      let mut fh = OpenOptions::new().write(true).create(true).open(path)?;
+      fh.seek(SeekFrom::Start(block_offset as u64))?;
+      fh.write_all(data)?;
+
+      // TODO Update the filesize
+      // if data.len() + offset as usize > attrs.size as usize {
+      //   attrs.size = (data.len() + offset as usize) as u64;
+      // }
+    }
+
+    Ok(data.len())
+  }
 
 }
 
@@ -537,7 +589,51 @@ pub struct BlockTopology {
   pub block: usize,
   pub hash: Vec<u8>,
   pub size: usize,
-  pub layout: (u8, u8),
   /// Shard Path is relative to the Filesystem's UUID
   pub shards: Vec<(String, String)>,
+}
+impl BlockTopology {
+
+  // /// Read each shard from the filesystem
+  // pub fn read(&self, archives: HashMap<String, PathBuf>, skip_after: usize) -> Result<Vec<Option<Vec<u8>>>> {
+  //   // skip_after: if the first n shards load, skip the rest
+  //   let mut shards: Vec<Option<Vec<u8>>> = Vec::new();
+  //
+  //   let mut can_skip = true;
+  //   for (i, shard) in self.shards.iter().enumerate() {
+  //     let (archive_uuid, shard) = shard;
+  //
+  //     let archive = archives.get(archive_uuid);
+  //     if archive.is_none() {
+  //       error!("Archive {} not found", archive_uuid);
+  //
+  //       can_skip = false;
+  //       continue;
+  //     }
+  //
+  //     let path = archive.unwrap().join(shard);
+  //     debug!("Reading block shard from {}", path.display());
+  //
+  //     match std::fs::read(&path) {
+  //       Ok(raw) => shards.push(Some(raw)),
+  //       Err(e) => {
+  //         error!("Failed to read block shard from {}. {:?}", path.display(), e);
+  //
+  //         // used to track if we can skip reconstructing the block
+  //         // the first n shards are data shards, the rest are parity shards
+  //         // so if all the data shards load correctly, we can skip the parity shards
+  //         can_skip = false;
+  //
+  //         shards.push(None);
+  //       }
+  //     }
+  //
+  //     if i >= (skip_after - 1) && can_skip {
+  //       debug!("first {} shards loaded successfully, allowed to skip the rest", skip_after);
+  //       break;
+  //     }
+  //   }
+  //
+  //   Ok(shards)
+  // }
 }

@@ -36,7 +36,7 @@ fn main() {
   let config = std::fs::read_to_string(&args.config).expect("could not read config file");
   let config: ConfigStub = serde_yaml::from_str(&config).expect("could not parse config file");
 
-  let mut options = vec![MountOption::FSName("fuser".to_string())];
+  let options = vec![MountOption::FSName("fuser".to_string())];
 
   let mount = config.mount.clone();
 

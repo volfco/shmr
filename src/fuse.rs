@@ -31,7 +31,6 @@ fn as_file_kind(mut mode: u32) -> IFileType {
   }
 }
 
-
 impl Filesystem for ShmrFilesystem {
   /// Initialize filesystem.
   /// Called before any other filesystem method. The kernel module connection can be configured
@@ -89,6 +88,208 @@ impl Filesystem for ShmrFilesystem {
         reply.error(libc::ENOENT);
       }
     }
+  }
+
+  fn getattr(&mut self, req: &Request<'_>, ino: u64, reply: ReplyAttr) {
+    trace!("FUSE({}) 'getattr' invoked for inode {}", req.unique(), ino);
+    match self.superblock.inode_read(&ino) {
+      Ok(inode) => {
+        let attr: FileAttr = inode.into();
+        reply.attr(&Duration::new(0, 0), &attr);
+      },
+      Err(_) => reply.error(libc::ENOENT),
+    }
+  }
+
+  fn setattr(&mut self, req: &Request<'_>, ino: u64, mode: Option<u32>, uid: Option<u32>, gid: Option<u32>, size: Option<u64>, atime: Option<TimeOrNow>, mtime: Option<TimeOrNow>, ctime: Option<SystemTime>, fh: Option<u64>, crtime: Option<SystemTime>, chgtime: Option<SystemTime>, bkuptime: Option<SystemTime>, flags: Option<u32>, reply: ReplyAttr) {
+    trace!("FUSE({}) 'setattr' invoked on inode {}", req.unique(), ino);
+
+    let mut parent_attr = match self.superblock.inode_read(&ino) {
+      Ok(inode) => inode,
+      Err(e) => {
+        warn!("FUST({}) 'setattr' failed. unable to read parent inode", req.unique());
+        reply.error(e);
+        return;
+      }
+    };
+
+    if mode.is_some() {
+      parent_attr.perm = mode.unwrap() as u16;
+    }
+    if uid.is_some() {
+      parent_attr.uid = uid.unwrap();
+    }
+    if gid.is_some() {
+      parent_attr.gid = gid.unwrap();
+    }
+    if size.is_some() {
+      parent_attr.size = size.unwrap();
+    }
+    if atime.is_some() {
+      match atime.unwrap() {
+        TimeOrNow::SpecificTime(time) => {
+          let since_the_epoch = time.duration_since(UNIX_EPOCH).expect("Time went backwards");
+          parent_attr.atime = (since_the_epoch.as_secs() as i64, since_the_epoch.subsec_nanos());
+        },
+        TimeOrNow::Now => {
+          let (sec, nsec) = time_now();
+          parent_attr.atime = (sec, nsec);
+        },
+      }
+    }
+    if mtime.is_some() {
+      match atime.unwrap() {
+        TimeOrNow::SpecificTime(time) => {
+          let since_the_epoch = time.duration_since(UNIX_EPOCH).expect("Time went backwards");
+          parent_attr.atime = (since_the_epoch.as_secs() as i64, since_the_epoch.subsec_nanos());
+        },
+        TimeOrNow::Now => {
+          let (sec, nsec) = time_now();
+          parent_attr.atime = (sec, nsec);
+        },
+      }
+    }
+    if ctime.is_some() {
+      let since_the_epoch = ctime.unwrap().duration_since(UNIX_EPOCH).expect("Time went backwards");
+      parent_attr.ctime = (since_the_epoch.as_secs() as i64, since_the_epoch.subsec_nanos());
+    }
+    if crtime.is_some() {
+      let since_the_epoch = crtime.unwrap().duration_since(UNIX_EPOCH).expect("Time went backwards");
+      parent_attr.crtime = (since_the_epoch.as_secs() as i64, since_the_epoch.subsec_nanos());
+    }
+    if flags.is_some() {
+      parent_attr.flags = flags.unwrap();
+    }
+    if fh.is_some() {
+      unimplemented!("fh not implemented");
+    }
+    if chgtime.is_some() {
+      unimplemented!("chgtime not implemented");
+    }
+    if bkuptime.is_some() {
+      unimplemented!("bkuptime not implemented");
+    }
+
+    if let Err(e) = self.superblock.inode_update(&ino, &parent_attr) {
+      reply.error(e);
+      return;
+    }
+
+    debug!("FUSE({}) 'setattr' success. inode {} updated", req.unique(), ino);
+
+    reply.attr(&Duration::new(0, 0), &parent_attr.into());
+
+  }
+
+  fn mknod(&mut self, req: &Request<'_>, parent: u64, name: &OsStr, mut mode: u32, umask: u32, rdev: u32, reply: ReplyEntry) {
+
+    let file_type = mode & libc::S_IFMT as u32;
+
+    if file_type != libc::S_IFREG as u32
+      && file_type != libc::S_IFLNK as u32
+      && file_type != libc::S_IFDIR as u32
+    {
+      // TODO
+      warn!("mknod() implementation is incomplete. Only supports regular files, symlinks, and directories. Got {:o}", mode);
+      reply.error(libc::ENOSYS);
+      return;
+    }
+
+    let parent_attr = match self.superblock.inode_pread(&parent, req.uid(), req.gid(), libc::X_OK) {
+      Ok(inode) => inode,
+      Err(e) => {
+        reply.error(e);
+        return;
+      }
+    };
+
+    if !matches!(parent_attr.kind, IFileType::Directory) {
+      warn!("attempted to create file under non-directory inode");
+      reply.error(libc::ENOTDIR);
+      return;
+    }
+
+    match self.superblock.directory_contains(&parent, &name.as_bytes().to_vec()) {
+      Ok(true) => {
+        reply.error(libc::EEXIST);
+        return;
+      },
+      Err(e) => {
+        reply.error(e);
+        return;
+      },
+      _ => {},
+    }
+
+    // before updating the parent inode, create the child inode first.
+    // so if this fails, all we have is an orphaned inode and not a modified directory without the
+    // underlying inode
+
+    let gid = if parent_attr.perm & libc::S_ISGID as u16 != 0 {
+      parent_attr.gid
+    } else {
+      req.gid()
+    };
+    let attrs = FileAttributes {
+      ino: self.superblock.gen_inode().unwrap(),
+      size: 512,
+      blksize: 4096,
+      blocks: 1,
+
+      atime: time_now(),
+      mtime: time_now(),
+      ctime: time_now(),
+      crtime: time_now(), // mac os only, which we don't care about
+      kind: IFileType::Directory,
+
+      perm: mode as u16,
+      nlink: 2,  // Directories start with link count of 2, since they have a self link
+      uid: req.uid(),
+      gid,
+
+      rdev: 0,
+      flags: 0,
+    };
+
+    if let Err(e) = self.superblock.inode_update(&attrs.ino, &attrs) {
+      reply.error(e);
+      return;
+    }
+
+    // create the file inode
+    let gid = if parent_attr.perm & libc::S_ISGID as u16 != 0 {
+      parent_attr.gid
+    } else {
+      req.gid()
+    };
+
+    let attrs = FileAttributes {
+      ino: self.superblock.gen_inode().unwrap(),
+      size: 0,
+      blksize: 512,
+      blocks: 0,
+
+      atime: time_now(),
+      mtime: time_now(),
+      ctime: time_now(),
+      crtime: time_now(), // mac os only, which we don't care about
+      kind: as_file_kind(mode),
+
+      perm: mode as u16,
+      nlink: 2,  // Directories start with link count of 2, since they have a self link
+      uid: req.uid(),
+      gid,
+
+      rdev: 0,
+      flags: 0,
+    };
+
+    if let Err(e) = self.superblock.inode_update(&attrs.ino, &attrs) {
+      reply.error(e);
+      return;
+    }
+    // TODO: implement flags
+    reply.entry(&Duration::new(0, 0), &attrs.into(), 0);
   }
 
   /// Create a directory.
@@ -240,6 +441,58 @@ impl Filesystem for ShmrFilesystem {
       }
     }
   }
+  //
+  // /// Read directory.
+  // /// Send a buffer filled using buffer.fill(), with size not exceeding the requested size. Send
+  // /// an empty buffer on end of stream. fh will contain the value set by the opendir method, or
+  // /// will be undefined if the opendir method didn’t set any value.
+  // fn readdirplus(&mut self, _req: &Request<'_>, ino: u64, fh: u64, offset: i64, reply: ReplyDirectoryPlus) {
+  //   todo!()
+  // }
+  //
+  // /// Release an open directory.
+  // /// For every opendir call there will be exactly one releasedir call. fh will contain the value
+  // /// set by the opendir method, or will be undefined if the opendir method didn’t set any value.
+  // fn releasedir(&mut self, _req: &Request<'_>, _ino: u64, _fh: u64, _flags: i32, reply: ReplyEmpty) {
+  //   todo!()
+  // }
+  //
+  // /// Synchronize directory contents.
+  // /// If the datasync parameter is set, then only the directory contents should be flushed, not
+  // /// the metadata. fh will contain the value set by the opendir method, or will be undefined if
+  // /// the opendir method didn’t set any value.
+  // fn fsyncdir(&mut self, _req: &Request<'_>, ino: u64, fh: u64, datasync: bool, reply: ReplyEmpty) {
+  //   todo!()
+  // }
+
+  fn write(&mut self, req: &Request<'_>, ino: u64, fh: u64, offset: i64, data: &[u8], write_flags: u32, flags: i32, lock_owner: Option<u64>, reply: ReplyWrite) {
+    trace!("FUSE({}) 'write' invoked on inode {} for fh {} starting at offset {}. data length: {}", req.unique(), ino, fh, offset, data.len());
+
+    assert!(offset >= 0);
+    // if !check_file_handle_write(fh) {
+    //   reply.error(libc::EACCES);
+    //   return;
+    // }
+
+    let mut file_ino = self.superblock.read_file_topology(&ino).unwrap();
+
+    match file_ino.write(&self.config, data, offset) {
+      Ok(size) => {
+        info!("successfully wrote {} bytes", &size);
+        reply.written(size as u32);
+      }
+      Err(e) => {
+        error!("failed to write file. {:?}", &e);
+        reply.error(libc::EIO);
+      }
+    }
+  }
+
+  fn flush(&mut self, req: &Request<'_>, ino: u64, fh: u64, lock_owner: u64, reply: ReplyEmpty) {
+    trace!("FUSE({}) 'flush' invoked on inode {} for fh {}", req.unique(), ino, fh);
+
+    reply.ok();
+  }
 
   /// Open a directory.
   /// Filesystem may store an arbitrary file handle (pointer, index, etc) in fh, and use this in
@@ -280,17 +533,6 @@ impl Filesystem for ShmrFilesystem {
     reply.opened(self.allocate_next_file_handle(read, write), 0);
   }
 
-  fn getattr(&mut self, req: &Request<'_>, ino: u64, reply: ReplyAttr) {
-    trace!("FUSE({}) 'getattr' invoked for inode {}", req.unique(), ino);
-    match self.superblock.inode_read(&ino) {
-      Ok(inode) => {
-        let attr: FileAttr = inode.into();
-        reply.attr(&Duration::new(0, 0), &attr);
-      },
-      Err(_) => reply.error(libc::ENOENT),
-    }
-  }
-
   /// Read directory.
   /// Send a buffer filled using buffer.fill(), with size not exceeding the requested size. Send
   /// an empty buffer on end of stream. fh will contain the value set by the opendir method, or
@@ -326,30 +568,9 @@ impl Filesystem for ShmrFilesystem {
 
     reply.ok();
   }
-  //
-  // /// Read directory.
-  // /// Send a buffer filled using buffer.fill(), with size not exceeding the requested size. Send
-  // /// an empty buffer on end of stream. fh will contain the value set by the opendir method, or
-  // /// will be undefined if the opendir method didn’t set any value.
-  // fn readdirplus(&mut self, _req: &Request<'_>, ino: u64, fh: u64, offset: i64, reply: ReplyDirectoryPlus) {
-  //   todo!()
-  // }
-  //
-  // /// Release an open directory.
-  // /// For every opendir call there will be exactly one releasedir call. fh will contain the value
-  // /// set by the opendir method, or will be undefined if the opendir method didn’t set any value.
-  // fn releasedir(&mut self, _req: &Request<'_>, _ino: u64, _fh: u64, _flags: i32, reply: ReplyEmpty) {
-  //   todo!()
-  // }
-  //
-  // /// Synchronize directory contents.
-  // /// If the datasync parameter is set, then only the directory contents should be flushed, not
-  // /// the metadata. fh will contain the value set by the opendir method, or will be undefined if
-  // /// the opendir method didn’t set any value.
-  // fn fsyncdir(&mut self, _req: &Request<'_>, ino: u64, fh: u64, datasync: bool, reply: ReplyEmpty) {
-  //   todo!()
-  // }
-
+  fn getxattr(&mut self, req: &Request<'_>, ino: u64, name: &OsStr, size: u32, reply: ReplyXattr) {
+    reply.error(libc::ERANGE);
+  }
   // File operations
   fn create(&mut self, req: &Request<'_>, parent: u64, name: &OsStr, mut mode: u32, _umask: u32, flags: i32, reply: ReplyCreate) {
     trace!("FUSE({}) 'create' invoked. creating file {:?} under inode {}", req.unique(), name, parent);
@@ -461,216 +682,6 @@ impl Filesystem for ShmrFilesystem {
       self.allocate_next_file_handle(read, write),
       0,
     );
-  }
-
-  fn setattr(&mut self, req: &Request<'_>, ino: u64, mode: Option<u32>, uid: Option<u32>, gid: Option<u32>, size: Option<u64>, atime: Option<TimeOrNow>, mtime: Option<TimeOrNow>, ctime: Option<SystemTime>, fh: Option<u64>, crtime: Option<SystemTime>, chgtime: Option<SystemTime>, bkuptime: Option<SystemTime>, flags: Option<u32>, reply: ReplyAttr) {
-    trace!("FUSE({}) 'setattr' invoked on inode {}", req.unique(), ino);
-
-    let mut parent_attr = match self.superblock.inode_read(&ino) {
-      Ok(inode) => inode,
-      Err(e) => {
-        warn!("FUST({}) 'setattr' failed. unable to read parent inode", req.unique());
-        reply.error(e);
-        return;
-      }
-    };
-
-    if mode.is_some() {
-      parent_attr.perm = mode.unwrap() as u16;
-    }
-    if uid.is_some() {
-      parent_attr.uid = uid.unwrap();
-    }
-    if gid.is_some() {
-      parent_attr.gid = gid.unwrap();
-    }
-    if size.is_some() {
-      parent_attr.size = size.unwrap();
-    }
-    if atime.is_some() {
-      match atime.unwrap() {
-        TimeOrNow::SpecificTime(time) => {
-          let since_the_epoch = time.duration_since(UNIX_EPOCH).expect("Time went backwards");
-          parent_attr.atime = (since_the_epoch.as_secs() as i64, since_the_epoch.subsec_nanos());
-        },
-        TimeOrNow::Now => {
-          let (sec, nsec) = time_now();
-          parent_attr.atime = (sec, nsec);
-        },
-      }
-    }
-    if mtime.is_some() {
-      match atime.unwrap() {
-        TimeOrNow::SpecificTime(time) => {
-          let since_the_epoch = time.duration_since(UNIX_EPOCH).expect("Time went backwards");
-          parent_attr.atime = (since_the_epoch.as_secs() as i64, since_the_epoch.subsec_nanos());
-        },
-        TimeOrNow::Now => {
-          let (sec, nsec) = time_now();
-          parent_attr.atime = (sec, nsec);
-        },
-      }
-    }
-    if ctime.is_some() {
-      let since_the_epoch = ctime.unwrap().duration_since(UNIX_EPOCH).expect("Time went backwards");
-      parent_attr.ctime = (since_the_epoch.as_secs() as i64, since_the_epoch.subsec_nanos());
-    }
-    if crtime.is_some() {
-      let since_the_epoch = crtime.unwrap().duration_since(UNIX_EPOCH).expect("Time went backwards");
-      parent_attr.crtime = (since_the_epoch.as_secs() as i64, since_the_epoch.subsec_nanos());
-    }
-    if flags.is_some() {
-      parent_attr.flags = flags.unwrap();
-    }
-    if fh.is_some() {
-      unimplemented!("fh not implemented");
-    }
-    if chgtime.is_some() {
-      unimplemented!("chgtime not implemented");
-    }
-    if bkuptime.is_some() {
-      unimplemented!("bkuptime not implemented");
-    }
-
-    if let Err(e) = self.superblock.inode_update(&ino, &parent_attr) {
-      reply.error(e);
-      return;
-    }
-
-    debug!("FUSE({}) 'setattr' success. inode {} updated", req.unique(), ino);
-
-    reply.attr(&Duration::new(0, 0), &parent_attr.into());
-
-  }
-
-  fn getxattr(&mut self, req: &Request<'_>, ino: u64, name: &OsStr, size: u32, reply: ReplyXattr) {
-    reply.error(libc::ERANGE);
-  }
-
-  fn flush(&mut self, req: &Request<'_>, ino: u64, fh: u64, lock_owner: u64, reply: ReplyEmpty) {
-    trace!("FUSE({}) 'flush' invoked on inode {} for fh {}", req.unique(), ino, fh);
-
-    reply.ok();
-  }
-  fn mknod(&mut self, req: &Request<'_>, parent: u64, name: &OsStr, mut mode: u32, umask: u32, rdev: u32, reply: ReplyEntry) {
-
-    let file_type = mode & libc::S_IFMT as u32;
-
-    if file_type != libc::S_IFREG as u32
-      && file_type != libc::S_IFLNK as u32
-      && file_type != libc::S_IFDIR as u32
-    {
-      // TODO
-      warn!("mknod() implementation is incomplete. Only supports regular files, symlinks, and directories. Got {:o}", mode);
-      reply.error(libc::ENOSYS);
-      return;
-    }
-
-    let parent_attr = match self.superblock.inode_pread(&parent, req.uid(), req.gid(), libc::X_OK) {
-      Ok(inode) => inode,
-      Err(e) => {
-        reply.error(e);
-        return;
-      }
-    };
-
-    if !matches!(parent_attr.kind, IFileType::Directory) {
-      warn!("attempted to create file under non-directory inode");
-      reply.error(libc::ENOTDIR);
-      return;
-    }
-
-    match self.superblock.directory_contains(&parent, &name.as_bytes().to_vec()) {
-      Ok(true) => {
-        reply.error(libc::EEXIST);
-        return;
-      },
-      Err(e) => {
-        reply.error(e);
-        return;
-      },
-      _ => {},
-    }
-
-    // before updating the parent inode, create the child inode first.
-    // so if this fails, all we have is an orphaned inode and not a modified directory without the
-    // underlying inode
-
-    let gid = if parent_attr.perm & libc::S_ISGID as u16 != 0 {
-      parent_attr.gid
-    } else {
-      req.gid()
-    };
-    let attrs = FileAttributes {
-      ino: self.superblock.gen_inode().unwrap(),
-      size: 512,
-      blksize: 512,
-      blocks: 1,
-
-      atime: time_now(),
-      mtime: time_now(),
-      ctime: time_now(),
-      crtime: time_now(), // mac os only, which we don't care about
-      kind: IFileType::Directory,
-
-      perm: mode as u16,
-      nlink: 2,  // Directories start with link count of 2, since they have a self link
-      uid: req.uid(),
-      gid,
-
-      rdev: 0,
-      flags: 0,
-    };
-
-    if let Err(e) = self.superblock.inode_update(&attrs.ino, &attrs) {
-      reply.error(e);
-      return;
-    }
-
-    // create the file inode
-    let gid = if parent_attr.perm & libc::S_ISGID as u16 != 0 {
-      parent_attr.gid
-    } else {
-      req.gid()
-    };
-
-    let attrs = FileAttributes {
-      ino: self.superblock.gen_inode().unwrap(),
-      size: 0,
-      blksize: 512,
-      blocks: 0,
-
-      atime: time_now(),
-      mtime: time_now(),
-      ctime: time_now(),
-      crtime: time_now(), // mac os only, which we don't care about
-      kind: as_file_kind(mode),
-
-      perm: mode as u16,
-      nlink: 2,  // Directories start with link count of 2, since they have a self link
-      uid: req.uid(),
-      gid,
-
-      rdev: 0,
-      flags: 0,
-    };
-
-    if let Err(e) = self.superblock.inode_update(&attrs.ino, &attrs) {
-      reply.error(e);
-      return;
-    }
-    // TODO: implement flags
-    reply.entry(&Duration::new(0, 0), &attrs.into(), 0);
-  }
-  fn write(&mut self, _req: &Request<'_>, ino: u64, fh: u64, offset: i64, data: &[u8], write_flags: u32, flags: i32, lock_owner: Option<u64>, reply: ReplyWrite) {
-
-    assert!(offset >= 0);
-    if !check_file_handle_write(fh) {
-      reply.error(libc::EACCES);
-      return;
-    }
-
-    todo!()
   }
 
 }

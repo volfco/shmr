@@ -2,6 +2,7 @@
 pub mod topology;
 pub mod fuse;
 
+use std::collections::HashMap;
 use std::time::UNIX_EPOCH;
 use std::time::SystemTime;
 use std::path::PathBuf;
@@ -20,6 +21,7 @@ const FILE_HANDLE_WRITE_BIT: u64 = 1 << 62;
 pub struct ConfigStub {
     pub mount: String,
     pub workspace: PathBuf,
+  pub archives: HashMap<String, PathBuf>,
 }
 
 pub struct ShmrFilesystem {
