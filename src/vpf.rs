@@ -81,6 +81,9 @@ impl VirtualPathBuf {
         offset: usize,
         buf: &mut [u8],
     ) -> anyhow::Result<usize> {
+        if buf.len() == 0 {
+            panic!("Cannot read into a zero sized buffer");
+        }
         let full_path = self.get_path(pool_map)?;
         let file_path = full_path.1.join(full_path.0);
 
