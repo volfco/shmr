@@ -134,7 +134,7 @@ impl StorageBlock {
         let r = ReedSolomon::new(topology.0.into(), topology.1.into())?;
 
         let mut shards: Vec<Vec<u8>> = shards.iter().map(|path| {
-          let mut buffer = Vec::new();
+          let mut buffer = vec![0; *shard_size];
           if let Err(e) = path.read(pool_map, 0, &mut buffer) {
             println!("Error reading shard: {:?}", e);
           }
@@ -145,8 +145,6 @@ impl StorageBlock {
 
           buffer
         }).collect();
-
-        eprintln!("Shards: {:#?}", shards);
 
         Ok(r.verify(&shards)?)
       }
@@ -278,8 +276,8 @@ mod tests {
     let mut pool_map: HashMap<String, PathBuf> = HashMap::new();
     pool_map.insert("test_pool".to_string(), temp_dir.to_path_buf());
 
-    let buf = random_data(1024);
-    let shard_size = 400; // 50 bytes per shard, so the 3rd shard should be mostly empty
+    let buf = random_data(1024 * 1024 * 8);
+    let shard_size = 1024 * 1024 * 3;
 
     let shards = vec![VirtualPathBuf {
       pool: "test_pool".to_string(),
@@ -338,23 +336,22 @@ mod tests {
     assert_eq!(read.unwrap(), buf.len());
     assert_eq!(read_buffer, buf);
 
-    //
-    // // now, delete two shards
-    // let rand1 = rand::random::<usize>() % shards.len();
-    // let rand2 = rand::random::<usize>() % shards.len();
-    //
-    // let _ = shards[rand1].delete(&pool_map);
-    // let _ = shards[rand2].delete(&pool_map);
-    //
-    // // verify the StorageBlock does not verify
-    // let vf = sb.verify(&pool_map);
-    // assert!(!vf.unwrap(), "StorageBlock should not verify.");
-    //
-    // // read the data back
-    // let mut read_buffer = vec![0; buf.len()];
-    // let read = sb.read(&pool_map, 0, &mut read_buffer);
-    // assert!(read.is_ok(), "Error reading: {:?}", read);
-    // assert_eq!(read.unwrap(), buf.len());
+    // now, delete two shards
+    let rand1 = rand::random::<usize>() % shards.len();
+    let rand2 = rand::random::<usize>() % shards.len();
+
+    let _ = shards[rand1].delete(&pool_map);
+    let _ = shards[rand2].delete(&pool_map);
+
+    // verify the StorageBlock does not verify
+    let vf = sb.verify(&pool_map);
+    assert!(!vf.unwrap(), "StorageBlock should not verify.");
+
+    // read the data back
+    let mut read_buffer = vec![0; buf.len()];
+    let read = sb.read(&pool_map, 0, &mut read_buffer);
+    assert!(read.is_ok(), "Error reading: {:?}", read);
+    assert_eq!(read.unwrap(), buf.len());
 
   }
 

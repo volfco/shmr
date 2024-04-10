@@ -19,9 +19,7 @@ pub fn read_ec_shards(r: &ReedSolomon, pool_map: &HashMap<String, PathBuf>, shar
     // of the correct size so things become easier elsewhere. Well, just the initial write to an
     // empty file.
     if buffer.is_empty() {
-      warn!("Empty shard found. Creating a new buffer of size {}", shard_size);
-      // TODO Should we write the extra zerp padding tp disk?
-      buffer.resize(*shard_size, 0);
+      return None;
     }
 
     Some(buffer)
@@ -30,9 +28,14 @@ pub fn read_ec_shards(r: &ReedSolomon, pool_map: &HashMap<String, PathBuf>, shar
   if shards.iter().take(r.data_shard_count()).all(|x| x.is_some()) {
     trace!("All data shards are intact. No need to reconstruct.");
   } else {
-    debug!("Some data shards are missing. Reconstructing...");
+    warn!("missing data shards. Attempting to reconstruct.");
+
+    let start_time = std::time::Instant::now();
     r.reconstruct(&mut shards).unwrap();
-    debug!("Reconstruction complete.");
+
+    debug!("Reconstruction complete. took {:?}", start_time.elapsed());
+
+    // TODO Do something with the reconstructed data, so we don't need to reconstruct this block again
   }
 
   let mut buffer = vec![];

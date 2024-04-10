@@ -28,7 +28,7 @@ impl VirtualPathBuf {
 
         let result = (path_buf.join(&self.filename), path_buf);
         trace!(
-            "Resolved path for {:?} is (file: {:?}, dir: {:?})",
+            "Resolved path for {:?} to (file: {:?}, dir: {:?})",
             self, result.0, result.1
         );
 
