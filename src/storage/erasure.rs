@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use anyhow::Result;
-use log::{debug, error, trace};
+use log::{debug, error, trace, warn};
 use reed_solomon_erasure::galois_8::ReedSolomon;
 use crate::vpf::VirtualPathBuf;
 
@@ -9,7 +9,7 @@ pub fn read_ec_shards(r: &ReedSolomon, pool_map: &HashMap<String, PathBuf>, shar
   // we can assume that the shards are in the correct order, as they were created in the correct order... in theory
   // We can just read the data from the shards, and then decode it
   let mut shards: Vec<Option<Vec<u8>>> = shards.iter().map(|path| {
-    let mut buffer = Vec::new();
+    let mut buffer = vec![0; *shard_size];
     if let Err(e) = path.read(pool_map, 0, &mut buffer) {
       error!("Error opening file: {:?}", e);
       return None;
@@ -19,6 +19,7 @@ pub fn read_ec_shards(r: &ReedSolomon, pool_map: &HashMap<String, PathBuf>, shar
     // of the correct size so things become easier elsewhere. Well, just the initial write to an
     // empty file.
     if buffer.is_empty() {
+      warn!("Empty shard found. Creating a new buffer of size {}", shard_size);
       // TODO Should we write the extra zerp padding tp disk?
       buffer.resize(*shard_size, 0);
     }

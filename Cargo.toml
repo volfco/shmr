@@ -19,3 +19,5 @@ rkyv = { version = "0.7", features = ["validation"]}
 libc = "0.2.153"
 clap = { version = "4.5.3", features = ["derive"]}
 rand = "0.9.0-alpha.1"
+
+seahash = "4.1"

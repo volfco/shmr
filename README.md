@@ -3,6 +3,7 @@ A Purpose Built filesystem for use with SMR Hard Drives.
 
 
 
+
 ## references
 - https://github.com/wfraser/fuse-mt/
 - https://github.com/carlosgaldino/gotenksfs
@@ -23,3 +24,5 @@ A Purpose Built filesystem for use with SMR Hard Drives.
 shmr_0..n      inode file attributes
 shmr_0..n_ds   FileDescriptor or DirectoryDescriptor, based on inode file attributes
 ```
+
+async makes sense here, because we're dealing with file I/O? I'm not sure how multi-threading in fuse works to know if it would benifit. 

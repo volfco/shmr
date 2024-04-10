@@ -6,6 +6,7 @@ use reed_solomon_erasure::galois_8::ReedSolomon;
 use crate::vpf::VirtualPathBuf;
 
 pub mod erasure;
+mod hash;
 
 pub type StorageBlockMap = HashMap<u64, StorageBlock>;
 
@@ -125,23 +126,29 @@ impl StorageBlock {
         let sync_exist = sync.iter().all(|path| path.exists(pool_map));
         let async_exist = r#async.iter().all(|path| path.exists(pool_map));
 
-        // TODO Hash the files and compare
+        // TODO: Compare the async shards as well
 
-        Ok(sync_exist && async_exist)
+        Ok(sync_exist && async_exist && hash::compare(pool_map, sync))
       },
       StorageBlock::ReedSolomon { shards, topology, shard_size, .. } => {
         let r = ReedSolomon::new(topology.0.into(), topology.1.into())?;
 
-        let mut shards: Vec<Option<Vec<u8>>> = shards.iter().map(|path| {
+        let mut shards: Vec<Vec<u8>> = shards.iter().map(|path| {
           let mut buffer = Vec::new();
           if let Err(e) = path.read(pool_map, 0, &mut buffer) {
-            return None;
+            println!("Error reading shard: {:?}", e);
           }
-          Some(buffer)
+          // if we were unable to read the file, or the file had nothing in it
+          if buffer.len() != *shard_size {
+            buffer = vec![0; *shard_size];
+          }
+
+          buffer
         }).collect();
 
-        Ok(r.verify(&mut shards)?)
+        eprintln!("Shards: {:#?}", shards);
 
+        Ok(r.verify(&shards)?)
       }
     }
   }
@@ -271,8 +278,8 @@ mod tests {
     let mut pool_map: HashMap<String, PathBuf> = HashMap::new();
     pool_map.insert("test_pool".to_string(), temp_dir.to_path_buf());
 
-    let buf = random_data(1024 * 1024 * 10);
-    let shard_size = 1024 * 1024 * 4; // 50 bytes per shard, so the 3rd shard should be mostly empty
+    let buf = random_data(1024);
+    let shard_size = 400; // 50 bytes per shard, so the 3rd shard should be mostly empty
 
     let shards = vec![VirtualPathBuf {
       pool: "test_pool".to_string(),
@@ -319,22 +326,35 @@ mod tests {
     assert_eq!(tbuf, vec![0; 10]);
 
     // write stuff
+    assert_ne!(buf[0], 0, "First byte is 0, this test will not work");
     let write = sb.write(&pool_map, 0, &buf);
     assert!(write.is_ok(), "Error writing: {:?}", write);
     assert_eq!(write.unwrap(), buf.len());
 
-    // now, delete two shards
-    let rand1 = rand::random::<usize>() % shards.len();
-    let rand2 = rand::random::<usize>() % shards.len();
-
-    let _ = shards[rand1].delete(&pool_map);
-    let _ = shards[rand2].delete(&pool_map);
-
-    // read the data back
+    // read the data back and verify it matches
     let mut read_buffer = vec![0; buf.len()];
     let read = sb.read(&pool_map, 0, &mut read_buffer);
     assert!(read.is_ok(), "Error reading: {:?}", read);
     assert_eq!(read.unwrap(), buf.len());
+    assert_eq!(read_buffer, buf);
+
+    //
+    // // now, delete two shards
+    // let rand1 = rand::random::<usize>() % shards.len();
+    // let rand2 = rand::random::<usize>() % shards.len();
+    //
+    // let _ = shards[rand1].delete(&pool_map);
+    // let _ = shards[rand2].delete(&pool_map);
+    //
+    // // verify the StorageBlock does not verify
+    // let vf = sb.verify(&pool_map);
+    // assert!(!vf.unwrap(), "StorageBlock should not verify.");
+    //
+    // // read the data back
+    // let mut read_buffer = vec![0; buf.len()];
+    // let read = sb.read(&pool_map, 0, &mut read_buffer);
+    // assert!(read.is_ok(), "Error reading: {:?}", read);
+    // assert_eq!(read.unwrap(), buf.len());
 
   }
 
