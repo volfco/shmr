@@ -46,3 +46,68 @@ fn hash_file(path: &PathBuf) -> Result<u64>{
 
   Ok(hasher.finish())
 }
+
+#[cfg(test)]
+mod tests {
+  use std::io::Write;
+  use std::path::Path;
+  use env_logger::init;
+  use crate::tests::random_string;
+  use super::*;
+
+  #[test]
+  fn compare_identical_files() {
+    init();
+
+    let temp_dir = Path::new("/tmp");
+    let filename1 = random_string();
+    let filename2 = random_string();
+
+    let mut pool_map: HashMap<String, PathBuf> = HashMap::new();
+    pool_map.insert("test_pool".to_string(), temp_dir.to_path_buf());
+
+    let paths = vec![
+      VirtualPathBuf{ pool: "test_pool".to_string(), filename: filename1 },
+      VirtualPathBuf{ pool: "test_pool".to_string(), filename: filename2 },
+    ];
+
+    let contents = random_string();
+    let buf = contents.as_bytes();
+
+    paths[0].create(&pool_map).unwrap();
+    paths[0].write(&pool_map, 0, buf).unwrap();
+    paths[1].create(&pool_map).unwrap();
+    paths[1].write(&pool_map, 0, buf).unwrap();
+
+    assert_eq!(compare(&pool_map, &paths), true);
+  }
+
+  #[test]
+  fn compare_different_files() {
+    let temp_dir = Path::new("/tmp");
+    let filename1 = random_string();
+    let filename2 = random_string();
+
+    let mut pool_map: HashMap<String, PathBuf> = HashMap::new();
+    pool_map.insert("test_pool".to_string(), temp_dir.to_path_buf());
+
+    let paths = vec![
+      VirtualPathBuf{ pool: "test_pool".to_string(), filename: filename1 },
+      VirtualPathBuf{ pool: "test_pool".to_string(), filename: filename2 },
+    ];
+
+    let contents1 = random_string();
+    let buf1 = contents1.as_bytes();
+    let contents2 = random_string();
+    let buf2 = contents2.as_bytes();
+
+    paths[0].create(&pool_map).unwrap();
+    paths[0].write(&pool_map, 0, buf1).unwrap();
+
+    paths[1].create(&pool_map).unwrap();
+    paths[1].write(&pool_map, 0, buf2).unwrap();
+
+    assert_eq!(compare(&pool_map, &paths), false);
+  }
+
+}

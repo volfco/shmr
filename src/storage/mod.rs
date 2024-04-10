@@ -264,8 +264,6 @@ mod tests {
 
   #[test]
   fn test_ec_storage_block() {
-    init();
-
     let temp_dir = Path::new("/tmp");
     let filename1 = random_string();
     let filename2 = random_string();
