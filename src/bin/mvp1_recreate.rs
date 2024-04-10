@@ -1,11 +1,10 @@
-#[macro_use(shards)]
 extern crate reed_solomon_erasure;
 
 use reed_solomon_erasure::galois_8::ReedSolomon;
 // or use the following for Galois 2^16 backend
 // use reed_solomon_erasure::galois_16::ReedSolomon;
 use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::time::Instant;
 use serde::{Deserialize, Serialize};
@@ -45,7 +44,7 @@ fn main () {
 
     let file_layout_handle = File::open("test.shmr").unwrap();
 
-    let file_layout: FileTopology = serde_json::from_reader(file_layout_handle).unwrap();
+    let file_layout: FileTopology = serde_yaml::from_reader(file_layout_handle).unwrap();
 
     let mut output = File::create("output.bin").unwrap();
 

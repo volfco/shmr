@@ -6,7 +6,7 @@ use reed_solomon_erasure::galois_8::ReedSolomon;
 // or use the following for Galois 2^16 backend
 // use reed_solomon_erasure::galois_16::ReedSolomon;
 use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::time::Instant;
 use serde::{Deserialize, Serialize};
@@ -47,7 +47,7 @@ fn main() {
     let start_time = Instant::now();
     let file_layout_handle = File::open("test.shmr").unwrap();
 
-    let file_layout: FileTopology = serde_json::from_reader(file_layout_handle).unwrap();
+    let file_layout: FileTopology = serde_yaml::from_reader(file_layout_handle).unwrap();
     for block in file_layout.blocks {
         let shard_size = (block.size as f32 / block.layout.0 as f32).ceil() as usize;
         let mut shard_file_states = Vec::new();
@@ -84,7 +84,7 @@ fn main() {
         }
 
         // Convert back to normal shard arrangement
-        let result: Vec<_> = shards.into_iter().filter_map(|x| x).collect();
+        let result: Vec<_> = shards.into_iter().flatten().collect();
 
         if let Err(e) = r.verify(&result) {
             error!("[block {}] failed to verify: {:?}", block.block, e);

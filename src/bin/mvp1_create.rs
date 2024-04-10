@@ -1,4 +1,3 @@
-#[macro_use(shards)]
 extern crate reed_solomon_erasure;
 
 use reed_solomon_erasure::galois_8::ReedSolomon;
@@ -49,6 +48,7 @@ fn main () {
     let parity_shards = 2;
 
     // eventually, these will be mounts sorted by free space (and other attributes)
+    #[allow(clippy::useless_vec)]
     let targets = vec![PathBuf::from("dir1"), PathBuf::from("dir2"), PathBuf::from("dir3"), PathBuf::from("dir4"), PathBuf::from("dir5")];
 
     if targets.len() != (data_shards + parity_shards) {
@@ -93,7 +93,7 @@ fn main () {
         r.encode(&mut shards).unwrap();
 
         let duration = start.elapsed();
-        // println!("Encoding duration: {:?}", duration);
+        println!("Encoding duration: {:?}", duration);
 
         let mut shard_paths = Vec::new();
 
@@ -128,7 +128,7 @@ fn main () {
         size: file.metadata().unwrap().len() as usize,
     };
 
-    let shmr_data = serde_json::to_string(&file_topology).unwrap();
+    let shmr_data = serde_yaml::to_string(&file_topology).unwrap();
     let mut shmr_file = File::create("test.shmr").unwrap();
     shmr_file.write_all(shmr_data.as_bytes()).unwrap();
 

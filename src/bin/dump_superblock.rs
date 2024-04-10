@@ -16,7 +16,7 @@
 //   #[arg(short, long)]
 //   config: PathBuf,
 // }
-fn main() {}
+//
 // fn main() {
 //   let args = Args::parse();
 //
@@ -36,27 +36,12 @@ fn main() {}
 //   let config = std::fs::read_to_string(&args.config).expect("could not read config file");
 //   let config: ConfigStub = serde_yaml::from_str(&config).expect("could not parse config file");
 //
-//   let options = vec![MountOption::FSName("fuser".to_string())];
+//   let mut options = vec![MountOption::FSName("fuser".to_string())];
 //
 //   let mount = config.mount.clone();
 //
-//   // check if there is already something mounted at the mount point
-//
-//
-//   let result = fuser::mount2(
-//     ShmrFilesystem::init(config).unwrap(),
-//     mount,
-//     &options,
-//   );
-//   if let Err(e) = result {
-//     // Return a special error code for permission denied, which usually indicates that
-//     // "user_allow_other" is missing from /etc/fuse.conf
-//     if e.kind() == ErrorKind::PermissionDenied {
-//       error!("{}", e.to_string());
-//       std::process::exit(2);
-//     }
-//   }
-//
-//   // TODO unmount the filesystem when the program exits
-//
+//   let fs = ShmrFilesystem::init(config).unwrap();
 // }
+fn main() {
+
+}
