@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::ops::{Range, RangeBounds, RangeInclusive};
 use std::path::PathBuf;
 use anyhow::Result;
-use log::{debug, trace};
+use log::{debug, info, trace};
 use shmr::storage::StorageBlock;
 
 pub struct VirtualFile {
@@ -43,7 +43,7 @@ impl VirtualFile {
       true => offset / self.block_size,
       false => 0
     };
-    let mut ending_block = starting_block + (buf_len / self.block_size) - 1;
+    let mut ending_block = starting_block + (buf_len / self.block_size);
 
 
     starting_block..=ending_block
@@ -54,43 +54,29 @@ impl VirtualFile {
   }
 
   pub fn write(&mut self, offset: u64, buf: &[u8]) -> Result<usize> {
-    // I'm switching back and forth between needing zero indexed data and non zero indexed data :/
-    // WHY Did I make this a Range?
+    // I'm switching back and forth between needing zero indexed data and non-zero indexed data :/
     let block_range = self.calculate_block_range(offset, buf.len() as u64);
     trace!("writing {} bytes to offset {}. write blocks: {:?}", buf.len(), offset, &block_range);
 
-    if block_range.end() > &(self.blocks.len() as u64) {
-      let mut new_blocks = block_range.end() - self.blocks.len() as u64;
+    let mut written = 0;
 
-      if self.blocks.is_empty() {
-        // this is why zero is stupid
-        new_blocks += 1;
-      }
-
-      debug!("Adding {} new blocks to VirtualFile", new_blocks);
-      let pool = self.pool_map();
-      for _ in 0..new_blocks {
+    for block_idx in block_range.clone() {
+      if self.blocks.get(block_idx as usize).is_none() {
+        let pool = self.pool_map();
         let sb = StorageBlock::init_single(&pool)?;
         sb.create(&pool)?;
-
         self.blocks.push(sb);
       }
-    }
 
-    let mut written = 0;
-    let mut remaining_offset = offset;
-    for i in block_range.clone() {
+      let block = self.blocks.get(block_idx as usize).unwrap();
 
-      let buf_start = written;
-      let mut buf_end = written + self.block_size as usize;
-      // cuz nobody wants an out-of-bounds error
-      if buf_end > buf.len() {
-        buf_end = buf.len();
+      let block_offset = (block_idx * self.block_size) - offset;
+      let mut block_end = block_offset + self.block_size;
+      if block_end > buf.len() as u64 {
+        block_end = buf.len() as u64;
       }
-
-      written += self.blocks[i as usize].write(&self.pool_map(), remaining_offset as usize, &buf[buf_start..buf_end])?;
+      written += block.write(&self.pool_map(), block_offset as usize, &buf[written..(block_end as usize)])?;
     }
-
     Ok(written)
   }
 }
@@ -106,47 +92,8 @@ mod tests {
   use shmr::random_data;
   use super::*;
 
-  // #[test]
-  // fn test_calculate_block_range() {
-  //   let vf = VirtualFile {
-  //     base_dir: PathBuf::from("/tmp"),
-  //     size: 0,
-  //     blocks: vec![],
-  //     block_size: 1024,
-  //   };
-  //
-  //   let range = vf.calculate_block_range(0, 512);
-  //   assert_eq!(range, 0..1);
-  //
-  //   let range = vf.calculate_block_range(1024, 1024);
-  //   assert_eq!(range, 1..2);
-  //
-  //   let range = vf.calculate_block_range(1024, 2048);
-  //   assert_eq!(range, 1..3);
-  //
-  //   let range = vf.calculate_block_range(1024, 1024 * 1024);
-  //   assert_eq!(range, 1..1025);
-  // }
-
-  // #[test]
-  // fn test_virtual_file_write_smol() {
-  //   let mut vf = VirtualFile {
-  //     base_dir: PathBuf::from("/tmp"),
-  //     size: 0,
-  //     blocks: vec![],
-  //     block_size: 1024,
-  //   };
-  //
-  //   let buffer = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
-  //   let result = vf.write(0, &buffer);
-  //   assert!(result.is_ok());
-  //   assert_eq!(result.unwrap(), 10);
-  // }
-
   #[test]
-  fn test_virtual_file_write_small() {
-    env_logger::init();
-
+  fn test_virtual_file_write_one_block() {
     let mut vf = VirtualFile {
       base_dir: PathBuf::from("/tmp"),
       size: 0,
@@ -154,9 +101,59 @@ mod tests {
       block_size: 1024,
     };
 
-    let buffer = random_data(2048);
+    let buffer = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
     let result = vf.write(0, &buffer);
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), 2048);
+    assert_eq!(result.unwrap(), 10);
+
+    // read it back
+    let mut read_buffer = vec![0; 10];
+    let result = vf.read(0, &mut read_buffer);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), 10);
+    assert_eq!(read_buffer, buffer);
+  }
+
+  #[test]
+  fn test_virtual_file_write_two_blocks() {
+    let mut vf = VirtualFile {
+      base_dir: PathBuf::from("/tmp"),
+      size: 0,
+      blocks: vec![],
+      block_size: 1024,
+    };
+
+    let buffer = random_data(1999);
+    let result = vf.write(0, &buffer);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), 1999);
+
+    // read it back
+    let mut read_buffer = vec![0; 1999];
+    let result = vf.read(0, &mut read_buffer);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), 1999);
+    assert_eq!(read_buffer, buffer);
+  }
+  #[test]
+  fn test_virtual_file_write_lots_of_blocks_1() {
+    let mut vf = VirtualFile {
+      base_dir: PathBuf::from("/tmp"),
+      size: 0,
+      blocks: vec![],
+      block_size: 4096,
+    };
+
+    let buffer = random_data(199990);
+    let result = vf.write(0, &buffer);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), 199990);
+
+    // read it back
+    let mut read_buffer = vec![0; 199990];
+    let result = vf.read(0, &mut read_buffer);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), 199990);
+    assert_eq!(read_buffer, buffer);
   }
 }
