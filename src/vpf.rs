@@ -63,12 +63,12 @@ impl VirtualPathBuf {
 
         // ensure the directory exists
         if !full_path.1.exists() {
-            debug!("Creating directory: {:?}", &full_path.1);
+            trace!("creating directory: {:?}", &full_path.1);
             std::fs::create_dir_all(&full_path.1)
                 .context(format!("creating {:?}", &full_path.1))?;
         }
 
-        trace!("Creating file: {:?}", &file_path);
+        trace!("creating file {:?}", &file_path);
 
         let file = OpenOptions::new()
             .create(true)
@@ -86,17 +86,14 @@ impl VirtualPathBuf {
         &self,
         pool_map: &HashMap<String, PathBuf>,
         offset: usize,
-        buf: &mut [u8],
+        buf: &mut Vec<u8>,
     ) -> anyhow::Result<usize> {
-        if buf.is_empty() {
-            panic!("Cannot read into a zero sized buffer");
-        }
         let full_path = self.get_path(pool_map)?;
         let file_path = full_path.1.join(full_path.0);
 
         let mut file = File::open(&file_path).context(format!("opening {:?}", &file_path))?;
         file.seek(std::io::SeekFrom::Start(offset as u64))?;
-        let read = file.read(buf)?;
+        let read = file.read_to_end(buf)?;
 
         debug!("Read {} bytes from {:?} at offset {}", read, file_path, offset);
         Ok(read)
@@ -145,7 +142,6 @@ mod tests {
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
     use crate::random_string;
-    use crate::tests::*;
 
     #[test]
     fn test_virtual_path_buf_create() {

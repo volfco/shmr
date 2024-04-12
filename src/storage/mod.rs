@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
-use log::{debug, trace};
+use log::{debug};
 use rand::Rng;
 use reed_solomon_erasure::galois_8::ReedSolomon;
 use crate::vpf::VirtualPathBuf;
@@ -37,17 +37,36 @@ pub enum StorageBlock {
 }
 impl StorageBlock {
 
-  pub fn init_single(pool: &HashMap<String, PathBuf>) -> Result<Self> {
+  fn select_pool(pool: &HashMap<String, PathBuf>) -> &String {
     // TODO eventually we will want to be smart about how something from the pool is selected...
     //      for now, random!
     let mut rng = rand::thread_rng();
-    let canidate = pool.keys().nth(rng.gen_range(0..pool.len())).unwrap();
-    debug!("Selected pool: {}", canidate);
+    let candidate = pool.keys().nth(rng.gen_range(0..pool.len())).unwrap();
+    debug!("Selected pool: {:?}", candidate);
 
+    candidate
+  }
+
+  pub fn init_single(pool: &HashMap<String, PathBuf>) -> Result<Self> {
     Ok(StorageBlock::Single(VirtualPathBuf {
-      pool: canidate.to_string(),
+      pool: Self::select_pool(pool).clone(),
       filename: format!("{}.dat", random_string())
     }))
+  }
+
+  pub fn init_ec(pool: &HashMap<String, PathBuf>, topology: (u8, u8), shard_size: usize) -> Result<Self> {
+    let shards = (0..topology.0 + topology.1).map(|_| VirtualPathBuf {
+      pool: Self::select_pool(pool).clone(),
+      filename: format!("{}.dat", random_string())
+    }).collect();
+
+    Ok(StorageBlock::ReedSolomon {
+      version: 1,
+      topology,
+      shards,
+      shard_size,
+      size: 0
+    })
   }
 
   pub fn calculate_shard_size(length: usize, data_shards: u8) -> usize {
@@ -74,7 +93,7 @@ impl StorageBlock {
     }
   }
 
-  pub fn read(&self, pool_map: &HashMap<String, PathBuf>, offset: usize, mut buf: &mut [u8]) -> anyhow::Result<usize> {
+  pub fn read(&self, pool_map: &HashMap<String, PathBuf>, offset: usize, buf: &mut Vec<u8>) -> Result<usize> {
     match self {
       StorageBlock::Single(path) => path.read(pool_map, offset, buf),
       StorageBlock::Mirror { sync, .. } => {
@@ -108,7 +127,7 @@ impl StorageBlock {
   }
 
   pub fn write(&self, pool_map: &HashMap<String, PathBuf>, offset: usize, buf: &[u8]) -> anyhow::Result<usize> {
-    trace!("writing {} bytes at offset {}", buf.len(), offset);
+    debug!("writing {} bytes at offset {}", buf.len(), offset);
     match self {
       StorageBlock::Single(path) => path.write(pool_map, offset, buf),
       StorageBlock::Mirror { sync, r#async } => {
@@ -176,8 +195,6 @@ impl StorageBlock {
 
 #[cfg(test)]
 mod tests {
-  use crate::tests::*;
-
   use std::collections::HashMap;
   use std::path::{Path, PathBuf};
   use crate::{random_data, random_string};

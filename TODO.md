@@ -21,9 +21,9 @@ Goal. Ability to relocate blocks from the Workspace to the Archive drives, where
 
 ## 0.0.5
 - [ ] Implement basic metrics that get written to some sort of file. like /proc/mdinfo
+- [ ] Investigate how multi-threading/parallel processing would work
 
 ## 0.1.0
-- [ ] Rewrite to use https://github.com/Sherlock-Holo/fuse3 or https://github.com/cloud-hypervisor/fuse-backend-rs
 - [ ] `shmr_inspect`
   - [ ] `topology INODE` - Show the block topology of a file
   - [ ] `overview` - Shows information about the general state of the filesystem
