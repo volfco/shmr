@@ -25,4 +25,17 @@ shmr_0..n      inode file attributes
 shmr_0..n_ds   FileDescriptor or DirectoryDescriptor, based on inode file attributes
 ```
 
-async makes sense here, because we're dealing with file I/O? I'm not sure how multi-threading in fuse works to know if it would benifit. 
+## subsystems
+### StorageBlockDB
+A key/value store that stores information about individual storage blocks, and the underlying location of the data on disk.
+
+### Superblock
+A key/value store that acts more like a filesystem superblock, storing information about the filesystem as a whole. 
+
+A superblock entry is basically [u64: (Inode, InodeDescriptor)], where Inode contains the traditional filesystem 
+information, where InodeTopology contains the list of StorageBlocks that map to the actual data that makes up the inode.
+
+
+## thoughts
+- when data is first written, it is written to a single buffer file. SOMETHING HAPPENS and the rules are evaluated to 
+  figure out how the data is to be stored. This is where the shard size is determined (if applicable).

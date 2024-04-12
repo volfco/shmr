@@ -1,27 +1,27 @@
 #![feature(trivial_bounds)]
+use rand::Rng;
 pub mod vpf;
 pub mod storage;
+pub mod fsdb;
+mod fuse;
 
+// just some helper functions for now
+pub fn random_string() -> String {
+  let mut rng = rand::thread_rng();
+  let s: String = (0..14).map(|_| rng.gen_range(0..9).to_string()).collect();
+  s
+}
+
+pub fn random_data(size: usize) -> Vec<u8> {
+  let mut rng = rand::thread_rng();
+  (0..size).map(|_| rng.gen_range(0..255)).collect()
+}
 
 #[cfg(test)]
-mod tests {
-  use rand::Rng;
-
+pub mod tests {
   pub fn init() {
     let _ = env_logger::builder().is_test(true).try_init();
   }
-
-  pub fn random_string() -> String {
-    let mut rng = rand::thread_rng();
-    let s: String = (0..14).map(|_| rng.gen_range(0..9).to_string()).collect();
-    s
-  }
-
-  pub fn random_data(size: usize) -> Vec<u8> {
-    let mut rng = rand::thread_rng();
-    (0..size).map(|_| rng.gen_range(0..255)).collect()
-  }
-
 }
 
 // const FILE_HANDLE_READ_BIT: u64 = 1 << 63;

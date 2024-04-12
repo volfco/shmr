@@ -1,15 +1,22 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
-use log::error;
+use log::{debug, trace};
+use rand::Rng;
 use reed_solomon_erasure::galois_8::ReedSolomon;
 use crate::vpf::VirtualPathBuf;
+use rkyv::{Archive, Deserialize, Serialize};
+use anyhow::Result;
+use crate::random_string;
 
 pub mod erasure;
 mod hash;
 
-pub type StorageBlockMap = HashMap<u64, StorageBlock>;
-
+#[derive(Debug, Archive, Serialize, Deserialize, Clone, PartialEq)]
+#[archive(
+  compare(PartialEq),
+  check_bytes,
+)]
 pub enum StorageBlock {
   /// We're just passing writes through to the underlying file
   Single(VirtualPathBuf),
@@ -29,6 +36,20 @@ pub enum StorageBlock {
   }
 }
 impl StorageBlock {
+
+  pub fn init_single(pool: &HashMap<String, PathBuf>) -> Result<Self> {
+    // TODO eventually we will want to be smart about how something from the pool is selected...
+    //      for now, random!
+    let mut rng = rand::thread_rng();
+    let canidate = pool.keys().nth(rng.gen_range(0..pool.len())).unwrap();
+    debug!("Selected pool: {}", canidate);
+
+    Ok(StorageBlock::Single(VirtualPathBuf {
+      pool: canidate.to_string(),
+      filename: format!("{}.dat", random_string())
+    }))
+  }
+
   pub fn calculate_shard_size(length: usize, data_shards: u8) -> usize {
     (length as f32 / data_shards as f32).ceil() as usize
   }
@@ -87,6 +108,7 @@ impl StorageBlock {
   }
 
   pub fn write(&self, pool_map: &HashMap<String, PathBuf>, offset: usize, buf: &[u8]) -> anyhow::Result<usize> {
+    trace!("writing {} bytes at offset {}", buf.len(), offset);
     match self {
       StorageBlock::Single(path) => path.write(pool_map, offset, buf),
       StorageBlock::Mirror { sync, r#async } => {
@@ -133,7 +155,7 @@ impl StorageBlock {
       StorageBlock::ReedSolomon { shards, topology, shard_size, .. } => {
         let r = ReedSolomon::new(topology.0.into(), topology.1.into())?;
 
-        let mut shards: Vec<Vec<u8>> = shards.iter().map(|path| {
+        let shards: Vec<Vec<u8>> = shards.iter().map(|path| {
           let mut buffer = vec![0; *shard_size];
           if let Err(e) = path.read(pool_map, 0, &mut buffer) {
             println!("Error reading shard: {:?}", e);
@@ -158,6 +180,7 @@ mod tests {
 
   use std::collections::HashMap;
   use std::path::{Path, PathBuf};
+  use crate::{random_data, random_string};
   use crate::storage::StorageBlock;
   use crate::vpf::VirtualPathBuf;
 

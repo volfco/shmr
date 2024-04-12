@@ -4,10 +4,17 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
+use rkyv::{Archive, Deserialize, Serialize};
 
 /// VirtualPathBuf is like PathBuf, but the location of the pool is not stored in the path itself.
 /// Instead, it is provided as a parameter during operations.
-#[derive(Debug, Clone)]
+///
+/// There is no need for a constructor here because this has no state. I guess? idk
+#[derive(Debug, Archive, Serialize, Deserialize, Clone, PartialEq)]
+#[archive(
+  compare(PartialEq),
+  check_bytes,
+)]
 pub struct VirtualPathBuf {
     /// Storage Pool ID, in UUID format
     pub pool: String,
@@ -27,10 +34,10 @@ impl VirtualPathBuf {
         path_buf.push(&self.filename[2..4]); // next two characters of the filename
 
         let result = (path_buf.join(&self.filename), path_buf);
-        trace!(
-            "Resolved path for {:?} to (file: {:?}, dir: {:?})",
-            self, result.0, result.1
-        );
+        // trace!(
+        //     "Resolved path for {:?} to (file: {:?}, dir: {:?})",
+        //     self, result.0, result.1
+        // );
 
         Ok(result)
     }
@@ -81,7 +88,7 @@ impl VirtualPathBuf {
         offset: usize,
         buf: &mut [u8],
     ) -> anyhow::Result<usize> {
-        if buf.len() == 0 {
+        if buf.is_empty() {
             panic!("Cannot read into a zero sized buffer");
         }
         let full_path = self.get_path(pool_map)?;
@@ -137,6 +144,7 @@ mod tests {
     use log::error;
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
+    use crate::random_string;
     use crate::tests::*;
 
     #[test]

@@ -52,7 +52,7 @@ mod tests {
   use std::io::Write;
   use std::path::Path;
   use env_logger::init;
-  use crate::tests::random_string;
+  use crate::random_string;
   use super::*;
 
   #[test]
