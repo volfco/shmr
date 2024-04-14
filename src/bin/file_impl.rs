@@ -130,7 +130,6 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-  use std::io::Read;
   use shmr::random_data;
   use super::*;
 

@@ -49,7 +49,6 @@ fn hash_file(path: &PathBuf) -> Result<u64>{
 
 #[cfg(test)]
 mod tests {
-  use std::io::Write;
   use std::path::Path;
   use env_logger::init;
   use crate::random_string;
