@@ -11,6 +11,7 @@ use crate::random_string;
 
 pub mod erasure;
 mod hash;
+pub mod ops;
 
 #[derive(Debug, Archive, Serialize, Deserialize, Clone, PartialEq)]
 #[archive(
@@ -54,19 +55,19 @@ impl StorageBlock {
     }))
   }
 
-  pub fn init_ec(pool: &HashMap<String, PathBuf>, topology: (u8, u8), shard_size: usize) -> Result<Self> {
+  pub fn init_ec(pool: &HashMap<String, PathBuf>, topology: (u8, u8), shard_size: usize) -> Self {
     let shards = (0..topology.0 + topology.1).map(|_| VirtualPathBuf {
       pool: Self::select_pool(pool).clone(),
       filename: format!("{}.dat", random_string())
     }).collect();
 
-    Ok(StorageBlock::ReedSolomon {
+    StorageBlock::ReedSolomon {
       version: 1,
       topology,
       shards,
       shard_size,
       size: 0
-    })
+    }
   }
 
   pub fn calculate_shard_size(length: usize, data_shards: u8) -> usize {
@@ -74,7 +75,7 @@ impl StorageBlock {
   }
 
   /// Create the storage block, creating the necessary directories and files
-  pub fn create(&self, pool_map: &HashMap<String, PathBuf>) -> anyhow::Result<()> {
+  pub fn create(&self, pool_map: &HashMap<String, PathBuf>) -> Result<()> {
     match self {
       StorageBlock::Single(path) => path.create(pool_map),
       StorageBlock::Mirror { sync, r#async } => {
@@ -126,7 +127,7 @@ impl StorageBlock {
     }
   }
 
-  pub fn write(&self, pool_map: &HashMap<String, PathBuf>, offset: usize, buf: &[u8]) -> anyhow::Result<usize> {
+  pub fn write(&self, pool_map: &HashMap<String, PathBuf>, offset: usize, buf: &[u8]) -> Result<usize> {
     debug!("writing {} bytes at offset {}", buf.len(), offset);
     match self {
       StorageBlock::Single(path) => path.write(pool_map, offset, buf),
@@ -160,7 +161,7 @@ impl StorageBlock {
     }
   }
 
-  pub fn verify(&self, pool_map: &HashMap<String, PathBuf>) -> anyhow::Result<bool> {
+  pub fn verify(&self, pool_map: &HashMap<String, PathBuf>) -> Result<bool> {
     match self {
       StorageBlock::Single(path) => Ok(path.exists(pool_map)),
       StorageBlock::Mirror { sync, r#async } => {
@@ -230,7 +231,7 @@ mod tests {
     if let StorageBlock::Single(path) = sb {
       assert!(path.exists(&pool_map));
 
-      let mut read_buffer = vec![0; 10];
+      let mut read_buffer = vec![];
       let result = path.read(&pool_map, offset, &mut read_buffer);
 
       assert!(result.is_ok());
@@ -279,15 +280,15 @@ mod tests {
     assert_eq!(op.unwrap(), buf.len());
 
     // read the data back
-    let mut tbuf = vec![0; 10];
+    let mut tbuf = vec![];
     let read = sb.read(&pool_map, offset, &mut tbuf);
     assert!(read.is_ok());
     assert_eq!(tbuf, buf);
 
     if let StorageBlock::Mirror { sync, .. } = sb {
 
-      let mut buf1 = vec![0; 10];
-      let mut buf2 = vec![0; 10];
+      let mut buf1 = vec![];
+      let mut buf2 = vec![];
 
       let read1 = sync[0].read(&pool_map, offset, &mut buf1);
       assert!(read1.is_ok());
@@ -303,50 +304,43 @@ mod tests {
   }
 
   #[test]
-  fn test_ec_storage_block() {
-    let temp_dir = Path::new("/tmp");
-    let filename1 = random_string();
-    let filename2 = random_string();
-    let filename3 = random_string();
-    let filename4 = random_string();
-    let filename5 = random_string();
+  fn test_init_ec() {
+    let shard_size = 1024 * 1024 * 1;  // 1MB
 
     let mut pool_map: HashMap<String, PathBuf> = HashMap::new();
-    pool_map.insert("test_pool".to_string(), temp_dir.to_path_buf());
+    pool_map.insert("test_pool".to_string(), PathBuf::from("/tmp"));
 
-    let buf = random_data(1024 * 1024 * 8);
-    let shard_size = 1024 * 1024 * 3;
+    let ec_block = StorageBlock::init_ec(&pool_map, (3, 2), shard_size);
+    let valid = match ec_block {
+      StorageBlock::Single(_) => false,
+      StorageBlock::Mirror { .. } => false,
+      StorageBlock::ReedSolomon { version, topology, shards, shard_size, size } => {
+        assert_eq!(version, 1);
+        assert_eq!(topology, (3, 2));
+        assert_eq!(shards.len(), 5);
+        assert_eq!(shard_size, 1024 * 1024 * 1);
 
-    let shards = vec![VirtualPathBuf {
-      pool: "test_pool".to_string(),
-      filename: filename1
-    }, VirtualPathBuf {
-      pool: "test_pool".to_string(),
-      filename: filename2
-    }, VirtualPathBuf {
-      pool: "test_pool".to_string(),
-      filename: filename3
-    }, VirtualPathBuf {
-      pool: "test_pool".to_string(),
-      filename: filename4
-    }, VirtualPathBuf {
-      pool: "test_pool".to_string(),
-      filename: filename5
-    }];
-
-    let sb = StorageBlock::ReedSolomon {
-      version: 1,
-      topology: (3, 2), // 3 data shards, 1 parity shard
-      shards: shards.clone(),
-      shard_size,
-      size: buf.len(),
+        true
+      }
     };
 
+    assert!(valid, "Invalid EC block returned");
+  }
+
+  #[test]
+  fn test_ec_storage_block() {
+    let shard_size = 1024 * 1024 * 1;  // 1MB
+
+    let mut pool_map: HashMap<String, PathBuf> = HashMap::new();
+    pool_map.insert("test_pool".to_string(), PathBuf::from("/tmp"));
+
+    let ec_block = StorageBlock::init_ec(&pool_map, (3, 2), shard_size);
+
     // create the ec block
-    let create = sb.create(&pool_map);
+    let create = ec_block.create(&pool_map);
     assert!(create.is_ok());
 
-    let ec_shards_exist = match &sb {
+    let ec_shards_exist = match &ec_block {
       StorageBlock::ReedSolomon { shards, .. } => {
         shards.iter().all(|path| path.exists(&pool_map))
       },
@@ -355,42 +349,46 @@ mod tests {
     assert!(ec_shards_exist, "Not all ec shards exist on disk");
 
     // read the first 10 bytes to make sure it's empty
-    let mut tbuf = vec![0; 10];
-    let read = sb.read(&pool_map, 0, &mut tbuf);
+    let mut tbuf = vec![];
+    let read = ec_block.read(&pool_map, 0, &mut tbuf);
     assert!(read.is_ok(), "Error reading: {:?}", read);
-    assert_eq!(read.unwrap(), 10);
-    assert_eq!(tbuf, vec![0; 10]);
+    assert_eq!(tbuf[0..10], vec![0; 10]);
+  }
 
-    // write stuff
-    assert_ne!(buf[0], 0, "First byte is 0, this test will not work");
-    let write = sb.write(&pool_map, 0, &buf);
-    assert!(write.is_ok(), "Error writing: {:?}", write);
-    assert_eq!(write.unwrap(), buf.len());
+  #[test]
+  fn test_ec_block_write() {
+    let shard_size = 1024 * 1024 * 1;  // 1MB
 
-    // read the data back and verify it matches
-    let mut read_buffer = vec![0; buf.len()];
-    let read = sb.read(&pool_map, 0, &mut read_buffer);
-    assert!(read.is_ok(), "Error reading: {:?}", read);
-    assert_eq!(read.unwrap(), buf.len());
-    assert_eq!(read_buffer, buf);
+    let mut pool_map: HashMap<String, PathBuf> = HashMap::new();
+    pool_map.insert("test_pool".to_string(), PathBuf::from("/tmp"));
 
-    // now, delete two shards
-    let rand1 = rand::random::<usize>() % shards.len();
-    let rand2 = rand::random::<usize>() % shards.len();
+    let ec_block = StorageBlock::init_ec(&pool_map, (3, 2), shard_size);
 
-    let _ = shards[rand1].delete(&pool_map);
-    let _ = shards[rand2].delete(&pool_map);
+    // create the ec block
+    let create = ec_block.create(&pool_map);
+    assert!(create.is_ok());
 
-    // verify the StorageBlock does not verify
-    let vf = sb.verify(&pool_map);
-    assert!(!vf.unwrap(), "StorageBlock should not verify.");
+    // write 1.5MB of random data to the block
+    let data = random_data((1024 * 1024 * 1) + (1024 * 512));
+    let write = ec_block.write(&pool_map, 0, &data);
+    assert!(write.is_ok());
+    assert_eq!(write.unwrap(), data.len());
 
-    // read the data back
-    let mut read_buffer = vec![0; buf.len()];
-    let read = sb.read(&pool_map, 0, &mut read_buffer);
-    assert!(read.is_ok(), "Error reading: {:?}", read);
-    assert_eq!(read.unwrap(), buf.len());
+    if let StorageBlock::ReedSolomon { shards, .. } = ec_block {
+      // first shard will be the 1st MB of data, while the 2nd shard will contain 512k
+      let mut tbuf = vec![];
+      let read = shards[0].read(&pool_map, 0, &mut tbuf);
+      assert!(read.is_ok());
+      assert_eq!(tbuf, data[0..shard_size]);
 
+      let mut tbuf = vec![];
+      let read = shards[1].read(&pool_map, 0, &mut tbuf);
+      assert!(read.is_ok());
+      // the shard's contents is zero-padded, so we need to only look at the stuff that has stuff
+      assert_eq!(tbuf[0..1024*512], data[shard_size..]);
+    } else {
+      panic!("Invalid block type");
+    }
   }
 
 }

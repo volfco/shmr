@@ -156,7 +156,6 @@ mod tests {
         };
 
         let result = path.create(&pool_map);
-        error!("{:?}", result);
         assert!(result.is_ok());
     }
 
@@ -184,7 +183,7 @@ mod tests {
         assert!(result.is_ok());
 
         // read the data back
-        let mut read_buffer = vec![0; 3];
+        let mut read_buffer = vec![];
         let result = path.read(&pool_map, 0, &mut read_buffer);
         assert!(result.is_ok());
         assert_eq!(read_buffer, buffer);
