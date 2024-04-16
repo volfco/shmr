@@ -138,7 +138,6 @@ impl VirtualPathBuf {
 #[cfg(test)]
 mod tests {
     use super::VirtualPathBuf;
-    use log::error;
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
     use crate::random_string;

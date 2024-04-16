@@ -56,8 +56,6 @@ mod tests {
 
   #[test]
   fn compare_identical_files() {
-    init();
-
     let temp_dir = Path::new("/tmp");
     let filename1 = random_string();
     let filename2 = random_string();

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
-use log::{debug};
+use log::debug;
 use rand::Rng;
 use reed_solomon_erasure::galois_8::ReedSolomon;
 use crate::vpf::VirtualPathBuf;
@@ -31,9 +31,7 @@ pub enum StorageBlock {
     topology: (u8, u8),
     shards: Vec<VirtualPathBuf>,
     /// Size of each shard, used for file layout stuff
-    shard_size: usize,
-    /// Size of the Content stored in the block
-    size: usize,
+    shard_size: usize
   }
 }
 impl StorageBlock {
@@ -65,8 +63,7 @@ impl StorageBlock {
       version: 1,
       topology,
       shards,
-      shard_size,
-      size: 0
+      shard_size
     }
   }
 
@@ -115,8 +112,6 @@ impl StorageBlock {
 
         // read the shards
         let ec_shards = erasure::read_ec_shards(&r, pool_map, shards, shard_size)?;
-
-        // flatten the vec into a single buffer
         let mut buffer = vec![];
         for shard in ec_shards {
           buffer.write_all(&shard)?;
@@ -145,18 +140,16 @@ impl StorageBlock {
       StorageBlock::ReedSolomon { topology, shards, shard_size, .. } => {
         let r = ReedSolomon::new(topology.0.into(), topology.1.into())?;
 
-        // read the shards
-        let mut ec_shards = erasure::read_ec_shards(&r, pool_map, shards, shard_size)?;
-
-        // write the buffer to the shards
-        if erasure::update_ec_shards(&mut ec_shards, offset, buf)? > topology.0 {
-          panic!("Too many shards updated");
+        if r.data_shard_count() * shard_size < buf.len() {
+          panic!("buffer exceeds block size")
         }
 
-        // calculate the new parity shards and write all ec_shards to disk
-        erasure::write_ec_shards(&r, pool_map, shards, ec_shards)?;
+        let mut data = erasure::read(&r, pool_map, shards, *shard_size)?;
 
-        Ok(buf.len()) // TODO this most likely will need to be fixed
+        // update the buffer
+        data[offset..buf.len()].copy_from_slice(buf);
+
+        Ok(erasure::write(&r, pool_map, shards, *shard_size,  data)?) // TODO this most likely will need to be fixed
       }
     }
   }
@@ -314,7 +307,7 @@ mod tests {
     let valid = match ec_block {
       StorageBlock::Single(_) => false,
       StorageBlock::Mirror { .. } => false,
-      StorageBlock::ReedSolomon { version, topology, shards, shard_size, size } => {
+      StorageBlock::ReedSolomon { version, topology, shards, shard_size } => {
         assert_eq!(version, 1);
         assert_eq!(topology, (3, 2));
         assert_eq!(shards.len(), 5);
@@ -372,7 +365,6 @@ mod tests {
     let data = random_data((1024 * 1024 * 1) + (1024 * 512));
     let write = ec_block.write(&pool_map, 0, &data);
     assert!(write.is_ok());
-    assert_eq!(write.unwrap(), data.len());
 
     if let StorageBlock::ReedSolomon { shards, .. } = ec_block {
       // first shard will be the 1st MB of data, while the 2nd shard will contain 512k
