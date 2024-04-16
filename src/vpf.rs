@@ -1,20 +1,17 @@
 use anyhow::Context;
 use log::{debug, error, trace};
+use rkyv::{Archive, Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
-use rkyv::{Archive, Deserialize, Serialize};
 
 /// VirtualPathBuf is like PathBuf, but the location of the pool is not stored in the path itself.
 /// Instead, it is provided as a parameter during operations.
 ///
 /// There is no need for a constructor here because this has no state. I guess? idk
 #[derive(Debug, Archive, Serialize, Deserialize, Clone, PartialEq)]
-#[archive(
-  compare(PartialEq),
-  check_bytes,
-)]
+#[archive(compare(PartialEq), check_bytes)]
 pub struct VirtualPathBuf {
     /// Storage Pool ID, in UUID format
     pub pool: String,
@@ -53,7 +50,7 @@ impl VirtualPathBuf {
             Err(e) => {
                 error!("Error resolving path: {:?}", e);
                 false
-            },
+            }
         }
     }
 
@@ -95,7 +92,10 @@ impl VirtualPathBuf {
         file.seek(std::io::SeekFrom::Start(offset as u64))?;
         let read = file.read_to_end(buf)?;
 
-        debug!("Read {} bytes from {:?} at offset {}", read, file_path, offset);
+        debug!(
+            "Read {} bytes from {:?} at offset {}",
+            read, file_path, offset
+        );
         Ok(read)
     }
 
@@ -120,7 +120,10 @@ impl VirtualPathBuf {
         // ensure that we sync the data to disk
         file.sync_all()?;
 
-        debug!("Wrote {} bytes to {:?} at offset {}", written, file_path, offset);
+        debug!(
+            "Wrote {} bytes to {:?} at offset {}",
+            written, file_path, offset
+        );
         Ok(written)
     }
 
@@ -138,9 +141,9 @@ impl VirtualPathBuf {
 #[cfg(test)]
 mod tests {
     use super::VirtualPathBuf;
+    use crate::random_string;
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
-    use crate::random_string;
 
     #[test]
     fn test_virtual_path_buf_create() {

@@ -42,6 +42,4 @@
 //
 //   let fs = ShmrFilesystem::init(config).unwrap();
 // }
-fn main() {
-
-}
+fn main() {}
