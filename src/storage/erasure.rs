@@ -9,6 +9,29 @@ use crate::vpf::VirtualPathBuf;
 /// Read the given sets of shards, reconstruct the data if applicable, and return the encoded data
 pub fn read(r: &ReedSolomon, pool_map: &HashMap<String, PathBuf>, shards: &[VirtualPathBuf], shard_size: usize) -> Result<Vec<u8>> {
 
+  let shards = read_ec_shards(r, pool_map, shards, &shard_size)?;
+
+  let mut payload = vec![];
+
+  for (shard_idx, shard) in shards.iter().enumerate() {
+    if shard_idx == r.data_shard_count() {
+      break;
+    }
+
+    payload.extend_from_slice(&shard);
+  }
+
+  let ps = payload.len();
+  let ds = r.data_shard_count() * shard_size;
+  assert_eq!(ps, ds, "Payload size is not correct. Expected: {}, Got: {}", ds, ps);
+
+  debug!("Read {} bytes from {} shards", payload.len(), shards.len());
+
+  Ok(payload)
+}
+
+pub fn read_ec_shards(r: &ReedSolomon, pool_map: &HashMap<String, PathBuf>, shards: &[VirtualPathBuf], shard_size: &usize) -> Result<Vec<Vec<u8>>> {
+
   let mut shards: Vec<Option<Vec<u8>>> = shards.iter().map(|path| {
     let mut buffer = vec![];
     if let Err(e) = path.read(pool_map, 0, &mut buffer) {
@@ -20,7 +43,7 @@ pub fn read(r: &ReedSolomon, pool_map: &HashMap<String, PathBuf>, shards: &[Virt
     // of the correct size so things become easier elsewhere. Well, just the initial write to an
     // empty file.
     if buffer.is_empty() {
-      buffer.resize(shard_size, 0);
+      buffer.resize(*shard_size, 0);
     }
 
     Some(buffer)
@@ -39,18 +62,7 @@ pub fn read(r: &ReedSolomon, pool_map: &HashMap<String, PathBuf>, shards: &[Virt
     // TODO Do something with the reconstructed data, so we don't need to reconstruct this block again
   }
 
-  let mut payload = vec![];
-
-  for (shard_idx, shard) in shards.iter().enumerate() {
-    if shard_idx == r.data_shard_count() {
-      break;
-    }
-
-    let data = shard.clone().unwrap();
-    payload.extend_from_slice(&data);
-  }
-
-  Ok(payload)
+  Ok(shards.into_iter().map(|x| x.unwrap()).collect())
 }
 
 /// write the given data back to the given shards.
@@ -86,65 +98,6 @@ pub fn write(r: &ReedSolomon, pool_map: &HashMap<String, PathBuf>, shards: &[Vir
   }
 
   Ok(written)
-
-}
-
-pub fn read_ec_shards(r: &ReedSolomon, pool_map: &HashMap<String, PathBuf>, shards: &[VirtualPathBuf], shard_size: &usize) -> Result<Vec<Vec<u8>>> {
-  // we can assume that the shards are in the correct order, as they were created in the correct order... in theory
-  // We can just read the data from the shards, and then decode it
-  let mut shards: Vec<Option<Vec<u8>>> = shards.iter().map(|path| {
-    let mut buffer = vec![0; *shard_size];
-    if let Err(e) = path.read(pool_map, 0, &mut buffer) {
-      error!("Error opening file: {:?}", e);
-      return None;
-    }
-
-    // if the buffer is still empty, then we are reading an empty file. We need to return a buffer
-    // of the correct size so things become easier elsewhere. Well, just the initial write to an
-    // empty file.
-    if buffer.is_empty() {
-      return None;
-    }
-
-    Some(buffer)
-  }).collect();
-
-  if shards.iter().take(r.data_shard_count()).all(|x| x.is_some()) {
-    trace!("All data shards are intact. No need to reconstruct.");
-  } else {
-    warn!("missing data shards. Attempting to reconstruct.");
-
-    let start_time = std::time::Instant::now();
-    r.reconstruct(&mut shards).unwrap();
-
-    debug!("Reconstruction complete. took {:?}", start_time.elapsed());
-
-    // TODO Do something with the reconstructed data, so we don't need to reconstruct this block again
-  }
-
-  let mut buffer = vec![];
-
-  for shard in shards {
-    buffer.push(shard.unwrap_or(vec![0; *shard_size]));
-  }
-
-  Ok(buffer)
-}
-
-pub fn write_ec_shards(r: &ReedSolomon, pool_map: &HashMap<String, PathBuf>, shards: &[VirtualPathBuf], ec_shards: Vec<Vec<u8>>) -> Result<()> {
-  // ensure the number of on disk shards is the same as the number of ec_shards
-  assert_eq!(shards.len(), ec_shards.len());
-
-  let mut ec_shards = ec_shards;
-
-  // assume that the data has not already been encoded and that we should do it now
-  r.encode(&mut ec_shards).unwrap();
-
-  for (i, shard) in shards.iter().enumerate() {
-    shard.write(pool_map, 0,&ec_shards[i])?;
-  }
-
-  Ok(())
 }
 
 pub fn update_ec_shards(shards: &mut [Vec<u8>], offset: usize, buf: &[u8]) -> Result<u8> {
@@ -203,7 +156,7 @@ mod tests {
     let upd = update_ec_shards(&mut shards, 3, &update);
 
     // ensure that only two shards were updated
-    // assert_eq!(upd.unwrap(), 2);
+    assert_eq!(upd.unwrap(), 2);
 
     // Then:
     let expected_shards: Vec<Vec<u8>> = vec![

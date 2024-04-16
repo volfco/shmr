@@ -5,19 +5,13 @@ use anyhow::Result;
 use log::debug;
 
 /// Replaces the given StorageBlock with one that is Erasure Encoded.
-pub fn replace_with_ec(old: &StorageBlock, pool_map: &HashMap<String, PathBuf>, new_topology: (u8, u8), new_size: Option<usize>) -> Result<StorageBlock> {
+pub fn replace_with_ec(old: &StorageBlock, pool_map: &HashMap<String, PathBuf>, new_topology: (u8, u8)) -> Result<StorageBlock> {
   let mut contents = vec![];
   let m = old.read(pool_map, 0, &mut contents)?;
 
-  let shard_size = if let Some(size) = new_size {
-    size
-  } else {
-    (contents.len() / new_topology.0 as usize) + 1 // implicit conversation from f64 to usize truncates
-  };
+  assert!(m > 0, "read 0 bytes from storageblock");
 
-  debug!("selected shard size: {}. read {} bytes", shard_size, m);
-
-  let new_block = StorageBlock::init_ec(pool_map, new_topology, shard_size);
+  let new_block = StorageBlock::init_ec(pool_map, new_topology, m);
   new_block.create(pool_map)?;
 
   debug!("successfully created new storageblock");
@@ -55,10 +49,14 @@ mod tests {
     let write = single_sb.write(&pool_map, 0, &single_buf);
     assert!(write.is_ok());
 
-    let new_sb = replace_with_ec(&single_sb, &pool_map, (3, 2), None).unwrap();
+    let new_sb = replace_with_ec(&single_sb, &pool_map, (3, 2)).unwrap();
 
+    // read the new block and compare it to the original
+    let mut new_buf = vec![];
+    let read = new_sb.read(&pool_map, 0, &mut new_buf);
+    assert!(read.is_ok());
+    assert_eq!(read.unwrap(), single_buf.len());
 
-
+    assert_eq!(single_buf.len(), new_buf.len());
   }
-
 }
