@@ -36,7 +36,6 @@ mod tests {
 
     #[test]
     fn rewrite_single_storageblock_to_ec() {
-        env_logger::init();
         let temp_dir = Path::new("/tmp");
         let mut pool_map: HashMap<String, PathBuf> = HashMap::new();
         pool_map.insert("test_pool".to_string(), temp_dir.to_path_buf());

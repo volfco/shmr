@@ -1,5 +1,6 @@
 #![feature(trivial_bounds)]
 use rand::Rng;
+pub mod file;
 pub mod fsdb;
 mod fuse;
 pub mod storage;

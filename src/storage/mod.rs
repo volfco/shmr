@@ -229,6 +229,10 @@ impl StorageBlock {
             }
         }
     }
+
+    pub fn reconstruct(&self, _pool_map: &HashMap<String, PathBuf>) -> Result<()> {
+        todo!()
+    }
 }
 
 #[cfg(test)]
@@ -236,9 +240,10 @@ mod tests {
     use crate::storage::StorageBlock;
     use crate::vpf::VirtualPathBuf;
     use crate::{random_data, random_string};
-    use log::debug;
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
+
+    // TODO Add tests for verifying the data
 
     #[test]
     fn test_single_storage_block() {
