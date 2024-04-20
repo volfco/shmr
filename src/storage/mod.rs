@@ -50,7 +50,7 @@ impl StorageBlock {
 
         let buckets = map.0.get(pool).unwrap();
 
-        let candidate = buckets.keys().nth(rng.gen_range(0..pool.len())).unwrap();
+        let candidate = buckets.keys().nth(rng.gen_range(0..buckets.len())).unwrap();
         trace!("selected bucket {} from pool {}", candidate, pool);
 
         candidate.clone()
@@ -248,12 +248,12 @@ impl StorageBlock {
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::{PoolMap, StorageBlock};
+    use crate::storage::{StorageBlock};
     use crate::vpf::VirtualPathBuf;
     use crate::{random_data, random_string};
-    use std::collections::HashMap;
-    use std::path::{Path, PathBuf};
-
+    use super::*;
+    use std::path::{Path};
+    use crate::tests::get_pool;
     // TODO Add tests for verifying the data
 
     #[test]
@@ -261,11 +261,11 @@ mod tests {
         let temp_dir = Path::new("/tmp");
         let filename = random_string();
 
-        let mut pool_map: PoolMap = HashMap::new();
-        pool_map.insert("test_pool".to_string(), temp_dir.to_path_buf());
+        let pool_map = get_pool();
 
         let sb = StorageBlock::Single(VirtualPathBuf {
             pool: "test_pool".to_string(),
+            bucket: "bucket1".to_string(),
             filename,
         });
 
@@ -299,16 +299,17 @@ mod tests {
         let filename1 = random_string();
         let filename2 = random_string();
 
-        let mut pool_map: PoolMap = HashMap::new();
-        pool_map.insert("test_pool".to_string(), temp_dir.to_path_buf());
+        let pool_map = get_pool();
 
         let sb = StorageBlock::Mirror(vec![
             VirtualPathBuf {
                 pool: "test_pool".to_string(),
+                bucket: "bucket1".to_string(),
                 filename: filename1,
             },
             VirtualPathBuf {
                 pool: "test_pool".to_string(),
+                bucket: "bucket1".to_string(),
                 filename: filename2,
             },
         ]);
@@ -357,10 +358,9 @@ mod tests {
     fn test_init_ec() {
         let shard_size = 1024 * 1024 * 1; // 1MB
 
-        let mut pool_map: PoolMap = HashMap::new();
-        pool_map.insert("test_pool".to_string(), PathBuf::from("/tmp"));
+        let pool_map = get_pool();
 
-        let ec_block = StorageBlock::init_ec(&pool_map, (3, 2), shard_size);
+        let ec_block = StorageBlock::init_ec(pool_map.1.as_str(), &pool_map, (3, 2), shard_size);
         let valid = match ec_block {
             StorageBlock::Single(_) => false,
             StorageBlock::Mirror { .. } => false,
@@ -386,10 +386,9 @@ mod tests {
     fn test_ec_storage_block() {
         let shard_size = 1024 * 1024 * 1; // 1MB
 
-        let mut pool_map: PoolMap = HashMap::new();
-        pool_map.insert("test_pool".to_string(), PathBuf::from("/tmp"));
+        let pool_map = get_pool();
 
-        let ec_block = StorageBlock::init_ec(&pool_map, (3, 2), shard_size);
+        let ec_block = StorageBlock::init_ec(pool_map.1.as_str(), &pool_map, (3, 2), shard_size);
 
         // create the ec block
         let create = ec_block.create(&pool_map);
@@ -414,10 +413,9 @@ mod tests {
     fn test_ec_block_write_on_disk_data() {
         let data = random_data((1024 * 1024 * 1) + (1024 * 512));
 
-        let mut pool_map: PoolMap = HashMap::new();
-        pool_map.insert("test_pool".to_string(), PathBuf::from("/tmp"));
+        let pool_map = get_pool();
 
-        let ec_block = StorageBlock::init_ec(&pool_map, (3, 2), data.len());
+        let ec_block = StorageBlock::init_ec(pool_map.1.as_str(), &pool_map, (3, 2), data.len());
 
         // create the ec block
         let create = ec_block.create(&pool_map);

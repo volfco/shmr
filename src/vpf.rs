@@ -142,18 +142,15 @@ impl VirtualPathBuf {
 mod tests {
     use super::VirtualPathBuf;
     use crate::random_string;
-    use std::collections::HashMap;
-    use std::path::{Path, PathBuf};
+    use crate::tests::get_pool;
 
     #[test]
     fn test_virtual_path_buf_create() {
-        let temp_dir = Path::new("/tmp");
-
-        let mut pool_map: HashMap<String, PathBuf> = HashMap::new();
-        pool_map.insert("test_pool".to_string(), temp_dir.to_path_buf());
+        let pool_map = get_pool();
 
         let path = VirtualPathBuf {
             pool: "test_pool".to_string(),
+            bucket: "bucket1".to_string(),
             filename: "test_file".to_string(),
         };
 
@@ -164,14 +161,11 @@ mod tests {
     #[test]
     fn test_virtual_path_buf_write() {
         let filename = random_string();
-
-        let mut pool_map: HashMap<String, PathBuf> = HashMap::new();
-        let temp_dir = Path::new("/tmp");
-
-        pool_map.insert("test_pool".to_string(), temp_dir.to_path_buf());
+        let pool_map = get_pool();
 
         let path = VirtualPathBuf {
             pool: "test_pool".to_string(),
+            bucket: "bucket1".to_string(),
             filename,
         };
 
@@ -193,15 +187,12 @@ mod tests {
 
     #[test]
     fn test_virtual_path_buf_delete() {
-        let temp_dir = Path::new("/tmp");
-
         let filename = random_string();
-
-        let mut pool_map: HashMap<String, PathBuf> = HashMap::new();
-        pool_map.insert("test_pool".to_string(), temp_dir.to_path_buf());
+        let pool_map = get_pool();
 
         let path = VirtualPathBuf {
             pool: "test_pool".to_string(),
+            bucket: "bucket1".to_string(),
             filename,
         };
 

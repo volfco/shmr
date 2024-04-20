@@ -48,9 +48,11 @@ fn hash_file(path: &PathBuf) -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use super::*;
     use crate::random_string;
     use std::path::Path;
+    use crate::tests::get_pool;
 
     #[test]
     fn compare_identical_files() {
@@ -58,16 +60,17 @@ mod tests {
         let filename1 = random_string();
         let filename2 = random_string();
 
-        let mut pool_map: HashMap<String, PathBuf> = HashMap::new();
-        pool_map.insert("test_pool".to_string(), temp_dir.to_path_buf());
+        let pool_map: PoolMap = get_pool();
 
         let paths = vec![
             VirtualPathBuf {
                 pool: "test_pool".to_string(),
+                bucket: "bucket1".to_string(),
                 filename: filename1,
             },
             VirtualPathBuf {
                 pool: "test_pool".to_string(),
+                bucket: "bucket1".to_string(),
                 filename: filename2,
             },
         ];
@@ -89,16 +92,17 @@ mod tests {
         let filename1 = random_string();
         let filename2 = random_string();
 
-        let mut pool_map: HashMap<String, PathBuf> = HashMap::new();
-        pool_map.insert("test_pool".to_string(), temp_dir.to_path_buf());
+        let pool_map: PoolMap = get_pool();
 
         let paths = vec![
             VirtualPathBuf {
                 pool: "test_pool".to_string(),
+                bucket: "bucket1".to_string(),
                 filename: filename1,
             },
             VirtualPathBuf {
                 pool: "test_pool".to_string(),
+                bucket: "bucket1".to_string(),
                 filename: filename2,
             },
         ];

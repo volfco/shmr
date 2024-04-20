@@ -20,8 +20,22 @@ pub fn random_data(size: usize) -> Vec<u8> {
 
 #[cfg(test)]
 pub mod tests {
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use crate::storage::PoolMap;
+
     pub fn init() {
         let _ = env_logger::builder().is_test(true).try_init();
+    }
+
+    pub fn get_pool() -> PoolMap {
+        let mut buckets = HashMap::new();
+        buckets.insert("bucket1".to_string(), PathBuf::from("/tmp"));
+
+        let mut pool_map: PoolMap = (HashMap::new(), "test_pool".to_string());
+        pool_map.0.insert("test_pool".to_string(), buckets);
+
+        pool_map
     }
 }
 
