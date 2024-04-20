@@ -1,109 +1,174 @@
-// Filesystem database
-// The General idea is that we have two databases. One is the "superblock" that contains the
-// metadata of the filesystem, and the other is just for storing information on the underlying storage blocks.
-use crate::storage::StorageBlock;
+/// FileDB.
+///
+/// Goal is to provide a simple abstraction over on-disk data. Each Inode & InodeDescriptor is stored
+/// as indivual files on disk. The idea is, with the help of helper utilities, you can reconstruct
+/// files without needing to run the filesystem.
+use std::io::Read;
 use anyhow::{bail, Result};
-use log::debug;
 use rkyv::Deserialize;
-use sled::Db;
-use std::path::Path;
-// use fuser::{FileAttr, FUSE_ROOT_ID};
-// use crate::fuse::time_now;
-
-// const SUPERBLOCK_DB_NAME: &str = "superblock";
-const STORAGE_BLOCK_DB_NAME: &str = "blockdb";
+use std::path::{Path, PathBuf};
+use log::{trace};
+use walkdir::WalkDir;
+use crate::fuse::{Inode, InodeDescriptor};
 
 /// Database to store storage block information.
-pub struct StorageBlockDB {
-    db: Db,
+pub struct FsDB {
+    base_dir: PathBuf,
+    known_inodes: Vec<u64>
 }
-impl StorageBlockDB {
+impl FsDB {
+    fn read_file(&self, path: &Path) -> Result<Option<Vec<u8>>> {
+        if !path.exists() {
+            return Ok(None);
+        }
+        let mut file = std::fs::File::open(path)?;
+        let mut buf = vec![];
+        let _ = file.read_to_end(&mut buf)?;
+        Ok(Some(buf))
+    }
+
+    fn get_path(&self, name: &str, ext: &str) -> PathBuf {
+        let mut base = self.base_dir.clone();
+        if name.len() > 6 {
+            base.push(&name[0..2]); // first two characters
+            base.push(&name[2..4]); // next two characters
+
+            // if the name is "abcdef", then the path will be "ab/cd/abcdef.ext"
+        }
+        base = base.join(format!("{}.{}", name, ext));
+        trace!("Resolved path for {}.{}: {:?}", name, ext, base);
+        base
+    }
+
+    pub fn generate_id(&self) -> u64 {
+        let mut id;
+        // TODO try and generate sequential IDs
+        loop {
+            id = rand::random();
+            if !self.known_inodes.contains(&id) {
+                // check if the ID is already in use
+                if self.read_file(&self.get_path(&id.to_string(), "inode")).unwrap().is_none() {
+                    break;
+                }
+            }
+        }
+        id
+    }
+
     pub fn open(path: &Path) -> Result<Self> {
-        let db = sled::open(path.join(STORAGE_BLOCK_DB_NAME))?;
-        Ok(Self { db })
+        if !path.exists() {
+            std::fs::create_dir_all(path)?;
+        }
+        if !path.is_dir() {
+            bail!("Path exists and is not a directory: {:?}", path);
+        }
+
+        let mut s = Self { base_dir: path.to_path_buf(), known_inodes: vec![] };
+        s.index()?;
+        Ok(s)
+    }
+
+    pub fn index(&mut self) -> Result<()> {
+        // the directory tree could be flat, or two levels deep
+        let mut known_inodes = vec![];
+        for entity in WalkDir::new(&self.base_dir) {
+            let entry = entity?;
+            if entry.file_type().is_file() {
+                let file_name = entry.file_name().to_string_lossy();
+                if file_name.ends_with(".inode") {
+                    let inode = file_name.split('.').next().unwrap();
+                    known_inodes.push(inode.parse::<u64>()?);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn check_inode(&self, id: u64) -> bool {
+        self.get_path(&id.to_string(), "inode").exists()
+    }
+
+    pub fn check_topology(&self, id: u64) -> bool {
+        self.get_path(&id.to_string(), "shmr").exists()
     }
 
     /// Lookup & Read the given Block ID.
     /// Returns an Error when the block is not found or cannot be deserialized.
-    pub fn read(&self, id: u64) -> Result<StorageBlock> {
-        let entry = self.db.get(id.to_be_bytes())?;
-        if entry.is_none() {
-            bail!("StorageBlock {} not found", &id);
+    pub fn read_inode(&self, id: u64) -> Result<Inode> {
+        let path = self.get_path(&id.to_string(), "inode");
+        let content = self.read_file(&path)?;
+
+        if content.is_none() {
+            bail!("Inode {} is empty", id);
         }
 
-        let binding = entry.unwrap();
-        let archived = rkyv::check_archived_root::<StorageBlock>(&binding).unwrap();
-        let result: StorageBlock = match archived.deserialize(&mut rkyv::Infallible) {
-            Ok(storage_block) => storage_block,
+        let archive = content.unwrap();
+
+        let archived = rkyv::check_archived_root::<Inode>(&archive).unwrap();
+        let result: Inode = match archived.deserialize(&mut rkyv::Infallible) {
+            Ok(inode) => inode,
             Err(e) => {
                 // this should never happen, but you can never say never
-                bail!("Failed to deserialize FileAttributes: {:?}", e);
+                bail!("Failed to deserialize Inode: {:?}", e);
             }
         };
 
         Ok(result)
     }
 
-    /// Create a new StorageBlock entry in the database, returning the block's ID
-    pub fn create(&self, descriptor: &StorageBlock) -> Result<u64> {
-        let new_id = self.db.generate_id()?;
-        debug!("Creating new block with ID {}", new_id);
+    pub fn read_descriptor(&self, id: u64) -> Result<InodeDescriptor> {
+        let path = self.get_path(&id.to_string(), "shmr");
+        let content = self.read_file(&path)?;
 
-        let pos = rkyv::to_bytes::<_, 256>(descriptor)?;
-        self.db.insert(new_id.to_be_bytes(), &pos[..])?;
+        if content.is_none() {
+            bail!("Topology for Inode {} is empty", id);
+        }
+        let archive = content.unwrap();
+        let archived = rkyv::check_archived_root::<InodeDescriptor>(&archive).unwrap();
+        let result: InodeDescriptor = match archived.deserialize(&mut rkyv::Infallible) {
+            Ok(inode_descriptor) => inode_descriptor,
+            Err(e) => {
+                // this should never happen, but you can never say never
+                bail!("Failed to deserialize InodeDescriptor: {:?}", e);
+            }
+        };
 
-        Ok(new_id)
+        Ok(result)
     }
 
-    /// Update the StorageBlock entry in the database
-    pub fn update(&self, id: u64, descriptor: &StorageBlock) -> Result<()> {
+    pub fn write_inode(&self, id: u64, descriptor: &Inode) -> Result<()> {
+        let path = self.get_path(&id.to_string(), "inode");
+
+        if !path.exists() {
+            std::fs::create_dir_all(path.parent().unwrap())?;
+        }
+
         let pos = rkyv::to_bytes::<_, 256>(descriptor)?;
-        self.db.insert(id.to_be_bytes(), &pos[..])?;
+        std::fs::write(&path, &pos[..])?;
+        trace!("Wrote inode to {:?}", path);
+        Ok(())
+    }
+
+    pub fn write_descriptor(&self, id: u64, descriptor: &InodeDescriptor) -> Result<()> {
+        let path = self.get_path(&id.to_string(), "shmr");
+
+        let pos = rkyv::to_bytes::<_, 256>(descriptor)?;
+        std::fs::write(&path, &pos[..])?;
+        trace!("Wrote topology to {:?}", path);
         Ok(())
     }
 }
 
-pub struct Superblock {
-    #[allow(dead_code)]
-    db: Db,
-}
-impl Superblock {
-    pub fn open(_config: ()) -> Result<Self> {
-        todo!()
-        // let path = config.workspace.join("superblock.db");
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use crate::fsdb::FsDB;
 
-        // debug!("Opening superblock at {:?}", &path);
-        // let db = sled::open(path)?;
+    #[test]
+    fn test_inode_index() {
+        let db = FsDB::open(Path::new("/tmp/shmr")).unwrap();
+        assert_eq!(db.known_inodes.len(), 0);
 
-        // let supa = Self {
-        //   db,
-        // };
-
-        // check if the 0 inode exists. if not, we're on a fresh filesystem and we need to do some basic initialization
-        // if !supa.inode_exists(&FUSE_ROOT_ID)? {
-        //   info!("Initializing filesystem");
-
-        // create the root inode
-        // supa.inode_update(&FUSE_ROOT_ID, &Inode {
-        //   ino: FUSE_ROOT_ID,
-        //   size: 0,
-        //   blocks: 0,
-        //   atime: time_now(),
-        //   mtime: time_now(),
-        //   ctime: crate::time_now(),
-        //   crtime: crate::time_now(),
-        //   kind: IFileType::Directory,
-        //   perm: 0o755,
-        //   nlink: 1,
-        //   uid: 0,
-        //   gid: 0,
-        //   rdev: 0,
-        //   blksize: 0,
-        //   flags: 0,
-        // }).unwrap(); // todo this is fucky
-        //
-        // supa.directory_create(&FUSE_ROOT_ID, &FUSE_ROOT_ID)?;
-        // }
-        // Ok(supa)
     }
 }
