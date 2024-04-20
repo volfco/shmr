@@ -1,10 +1,10 @@
+use crate::storage::PoolMap;
 use anyhow::Context;
 use log::{debug, error, trace};
 use rkyv::{Archive, Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
-use crate::storage::PoolMap;
 
 /// VirtualPathBuf is like PathBuf, but the location of the pool is not stored in the path itself.
 /// Instead, it is provided as a parameter during operations.
@@ -21,11 +21,15 @@ impl VirtualPathBuf {
     /// Return the (Filename, Directory) for the file.
     /// It's inverted to avoid needing to create a copy of the directory name before joining the filename
     fn get_path(&self, map: &PoolMap) -> anyhow::Result<(PathBuf, PathBuf)> {
-        let pool_map = map.0.get(&self.pool)
+        let pool_map = map
+            .0
+            .get(&self.pool)
             .ok_or(anyhow::anyhow!("Invalid pool id"))?;
 
-        let mut path_buf = pool_map.get(&self.bucket)
-            .ok_or(anyhow::anyhow!("Invalid bucket id"))?.clone();
+        let mut path_buf = pool_map
+            .get(&self.bucket)
+            .ok_or(anyhow::anyhow!("Invalid bucket id"))?
+            .clone();
 
         path_buf.push(&self.filename[0..2]); // first two characters of the filename
         path_buf.push(&self.filename[2..4]); // next two characters of the filename
@@ -79,12 +83,7 @@ impl VirtualPathBuf {
         Ok(())
     }
 
-    pub fn read(
-        &self,
-        map: &PoolMap,
-        offset: usize,
-        buf: &mut Vec<u8>,
-    ) -> anyhow::Result<usize> {
+    pub fn read(&self, map: &PoolMap, offset: usize, buf: &mut Vec<u8>) -> anyhow::Result<usize> {
         let full_path = self.get_path(map)?;
         let file_path = full_path.1.join(full_path.0);
 
@@ -99,12 +98,7 @@ impl VirtualPathBuf {
         Ok(read)
     }
 
-    pub fn write(
-        &self,
-        map: &PoolMap,
-        offset: usize,
-        buf: &[u8],
-    ) -> anyhow::Result<usize> {
+    pub fn write(&self, map: &PoolMap, offset: usize, buf: &[u8]) -> anyhow::Result<usize> {
         let full_path = self.get_path(map)?;
         let file_path = full_path.1.join(full_path.0);
 

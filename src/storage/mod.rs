@@ -118,12 +118,7 @@ impl StorageBlock {
     }
 
     /// Read the contents of the StorageBlock into the given buffer starting at the given offset
-    pub fn read(
-        &self,
-        map: &PoolMap,
-        offset: usize,
-        buf: &mut Vec<u8>,
-    ) -> Result<usize> {
+    pub fn read(&self, map: &PoolMap, offset: usize, buf: &mut Vec<u8>) -> Result<usize> {
         match self {
             StorageBlock::Single(path) => path.read(map, offset, buf),
             StorageBlock::Mirror(copies) => {
@@ -157,12 +152,7 @@ impl StorageBlock {
     }
 
     /// Write the contents of the buffer to the StorageBlock at the given offset
-    pub fn write(
-        &self,
-        map: &PoolMap,
-        offset: usize,
-        buf: &[u8],
-    ) -> Result<usize> {
+    pub fn write(&self, map: &PoolMap, offset: usize, buf: &[u8]) -> Result<usize> {
         debug!("writing {} bytes at offset {}", buf.len(), offset);
         match self {
             StorageBlock::Single(path) => path.write(map, offset, buf),
@@ -201,8 +191,7 @@ impl StorageBlock {
         match self {
             StorageBlock::Single(path) => Ok(path.exists(map)),
             StorageBlock::Mirror(copies) => {
-                Ok(copies.iter().all(|path| path.exists(map))
-                    && hash::compare(map, copies))
+                Ok(copies.iter().all(|path| path.exists(map)) && hash::compare(map, copies))
             }
             StorageBlock::ReedSolomon {
                 shards,
@@ -248,12 +237,12 @@ impl StorageBlock {
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::{StorageBlock};
+    use super::*;
+    use crate::storage::StorageBlock;
+    use crate::tests::get_pool;
     use crate::vpf::VirtualPathBuf;
     use crate::{random_data, random_string};
-    use super::*;
-    use std::path::{Path};
-    use crate::tests::get_pool;
+    use std::path::Path;
     // TODO Add tests for verifying the data
 
     #[test]

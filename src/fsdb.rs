@@ -1,20 +1,20 @@
+use crate::fuse::{Inode, InodeDescriptor};
+use anyhow::{bail, Result};
+use log::trace;
+use rkyv::Deserialize;
 /// FileDB.
 ///
 /// Goal is to provide a simple abstraction over on-disk data. Each Inode & InodeDescriptor is stored
 /// as indivual files on disk. The idea is, with the help of helper utilities, you can reconstruct
 /// files without needing to run the filesystem.
 use std::io::Read;
-use anyhow::{bail, Result};
-use rkyv::Deserialize;
 use std::path::{Path, PathBuf};
-use log::{trace};
 use walkdir::WalkDir;
-use crate::fuse::{Inode, InodeDescriptor};
 
 /// Database to store storage block information.
 pub struct FsDB {
     base_dir: PathBuf,
-    known_inodes: Vec<u64>
+    known_inodes: Vec<u64>,
 }
 impl FsDB {
     fn read_file(&self, path: &Path) -> Result<Option<Vec<u8>>> {
@@ -47,7 +47,11 @@ impl FsDB {
             id = rand::random();
             if !self.known_inodes.contains(&id) {
                 // check if the ID is already in use
-                if self.read_file(&self.get_path(&id.to_string(), "inode")).unwrap().is_none() {
+                if self
+                    .read_file(&self.get_path(&id.to_string(), "inode"))
+                    .unwrap()
+                    .is_none()
+                {
                     break;
                 }
             }
@@ -63,7 +67,10 @@ impl FsDB {
             bail!("Path exists and is not a directory: {:?}", path);
         }
 
-        let mut s = Self { base_dir: path.to_path_buf(), known_inodes: vec![] };
+        let mut s = Self {
+            base_dir: path.to_path_buf(),
+            known_inodes: vec![],
+        };
         s.index()?;
         Ok(s)
     }
@@ -162,13 +169,12 @@ impl FsDB {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
     use crate::fsdb::FsDB;
+    use std::path::Path;
 
     #[test]
     fn test_inode_index() {
         let db = FsDB::open(Path::new("/tmp/shmr")).unwrap();
         assert_eq!(db.known_inodes.len(), 0);
-
     }
 }

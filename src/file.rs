@@ -2,7 +2,7 @@
 //       Then step through moving it from a single buffer file, to one with multiple StorageBlocks.
 //       Then do some I/O operations on it.
 use crate::storage::{PoolMap, StorageBlock};
-use anyhow::{Result};
+use anyhow::Result;
 use log::{info, trace};
 use rkyv::{Archive, Deserialize, Serialize};
 use std::collections::HashMap;
@@ -83,12 +83,7 @@ impl VirtualFile {
         starting_block..=ending_block
     }
 
-    pub fn read(
-        &self,
-        pool: &PoolMap,
-        offset: u64,
-        buf: &mut Vec<u8>,
-    ) -> Result<usize> {
+    pub fn read(&self, pool: &PoolMap, offset: u64, buf: &mut Vec<u8>) -> Result<usize> {
         // the upper bound of the block range is the total number of blocks we have
         let block_range = (match offset > 0 {
             true => offset / self.block_size,
@@ -115,13 +110,7 @@ impl VirtualFile {
         Ok(read)
     }
 
-    pub fn write(
-        &mut self,
-        pool: &PoolMap,
-        offset: u64,
-        buf: &[u8],
-    ) -> Result<usize> {
-
+    pub fn write(&mut self, pool: &PoolMap, offset: u64, buf: &[u8]) -> Result<usize> {
         // I'm switching back and forth between needing zero indexed data and non-zero indexed data :/
         let block_range = self.calculate_block_range(offset, buf.len() as u64);
         info!(

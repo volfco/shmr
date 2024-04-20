@@ -1,9 +1,9 @@
+use crate::storage::PoolMap;
 use crate::vpf::VirtualPathBuf;
 use anyhow::Result;
 use log::{debug, error, trace, warn};
 use reed_solomon_erasure::galois_8::ReedSolomon;
 use std::time::Instant;
-use crate::storage::PoolMap;
 
 /// Read the given sets of shards, reconstruct the data if applicable, and return the encoded data
 pub fn read(
