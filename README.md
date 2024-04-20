@@ -39,3 +39,5 @@ information, where InodeTopology contains the list of StorageBlocks that map to 
 ## thoughts
 - when data is first written, it is written to a single buffer file. SOMETHING HAPPENS and the rules are evaluated to 
   figure out how the data is to be stored. This is where the shard size is determined (if applicable).
+- The logic for deciding where writes should go is handled at the Fuse layer. VirtualFile doesn't need to think about
+  how to select where to write the data, just select from the given pool. 

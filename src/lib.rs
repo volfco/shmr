@@ -2,7 +2,7 @@
 use rand::Rng;
 pub mod file;
 pub mod fsdb;
-mod fuse;
+pub mod fuse;
 pub mod storage;
 pub mod vpf;
 

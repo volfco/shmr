@@ -2,12 +2,35 @@
 ## 0.0.1 
 Goal. Full FUSE implementation that only uses the workspace/blocks directory to store data
 
+- [X] StorageBlock Working
+  - [X] Single
+  - [X] Mirror
+  - [X] Erasure Coding
+    - [X] Create
+    - [X] Write
+    - [X] Read
 - [ ] Fully Initialize Filesystem on first run, if no superblock is found
-- [ ] Implement FUSE Interface where all File I/O is written to blocks in WORKSPACE/blocks/xx_xx.bin
-  - [X] `echo abc123 > mnt/test_file.txt` works
-  - [ ] `echo abc123 >> mnt/test_file.txt` works
-  - [ ] Block Topology is persisted to the superblock
-- [ ] Ensure consistent handling of the block size
+- [ ] Take the fuse `simple.rs` example and modify it to use the VirtualFile and FsDB structs
+- [ ] File I/O works
+  - [ ] Directories
+    - [ ] Create
+    - [ ] Read
+    - [ ] Write
+    - [ ] Delete
+    - [ ] Rename
+  - [ ] Files
+    - [ ] Create
+    - [ ] Read
+    - [ ] Write
+    - [ ] Delete
+    - [ ] Rename
+    - [ ] Truncate
+  - [ ] Symlinks
+    - [ ] Create
+    - [ ] Read
+    - [ ] Delete
+    - [ ] Rename
+
 
 ## 0.0.2 
 Goal. Ability to relocate blocks from the Workspace to the Archive drives, where blocks for a file can exist in both places.
@@ -18,6 +41,7 @@ Goal. Ability to relocate blocks from the Workspace to the Archive drives, where
   - [ ] Create command skeleton
   - [ ] ensure the filesystem is unmounted/offline
   - [ ] Update Inode with new block topology
+- [ ] Rhai Scripting to control how files move from one pool to the next
 
 ## 0.0.5
 - [ ] Implement basic metrics that get written to some sort of file. like /proc/mdinfo

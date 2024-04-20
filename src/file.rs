@@ -2,19 +2,16 @@
 //       Then step through moving it from a single buffer file, to one with multiple StorageBlocks.
 //       Then do some I/O operations on it.
 use crate::storage::StorageBlock;
-use anyhow::{bail, Result};
+use anyhow::{Result};
 use log::{info, trace};
 use rkyv::{Archive, Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::{Read, Write};
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 
 #[derive(Debug, Archive, Serialize, Deserialize, Clone, PartialEq)]
 #[archive(compare(PartialEq), check_bytes)]
 pub struct VirtualFile {
-    base_dir: String,
-
     /// File size, in bytes
     #[allow(dead_code)]
     size: u64,
@@ -22,36 +19,47 @@ pub struct VirtualFile {
     /// List of StorageBlocks, in order, that make up the file
     blocks: Vec<StorageBlock>,
 
+    /// Size of each block, in bytes
+    /// Used to calculate the block number to send I/O operations to. Additionally, used to size
+    /// erasure encoded shards.
     block_size: u64,
 }
 impl VirtualFile {
-    /// path is the file location, on disk
-    /// block_size is the size of each block, in bytes
-    pub fn open(path: impl Into<PathBuf>) -> Result<Self> {
-        let metadata_file = path.into().join("topology.shmr-v0");
-        if !metadata_file.exists() {
-            bail!("File not found: {:?}", metadata_file);
+    pub fn new(block_size: u64) -> Self {
+        VirtualFile {
+            size: 0,
+            blocks: vec![],
+            block_size,
         }
-
-        let mut file = std::fs::File::open(&metadata_file)?;
-        let mut buf = vec![];
-        let _ = file.read_to_end(&mut buf)?;
-
-        let archived = rkyv::check_archived_root::<Self>(&buf).unwrap();
-        Ok(archived.deserialize(&mut rkyv::Infallible)?)
     }
 
-    pub fn save_to_disk(&self) -> Result<()> {
-        let metadata_file = PathBuf::from(&self.base_dir).join("topology.shmr-v0");
-
-        let buf = rkyv::to_bytes::<_, 256>(self)?;
-
-        let mut file = std::fs::File::create(&metadata_file)?;
-        file.write_all(&buf[..])?;
-
-        info!("wrote VirtualFile to disk at {:?}", metadata_file);
-        Ok(())
-    }
+    // /// path is the file location, on disk
+    // /// block_size is the size of each block, in bytes
+    // pub fn open(path: impl Into<PathBuf>) -> Result<Self> {
+    //     let metadata_file = path.into().join("topology.shmr-v0");
+    //     if !metadata_file.exists() {
+    //         bail!("File not found: {:?}", metadata_file);
+    //     }
+    //
+    //     let mut file = std::fs::File::open(&metadata_file)?;
+    //     let mut buf = vec![];
+    //     let _ = file.read_to_end(&mut buf)?;
+    //
+    //     let archived = rkyv::check_archived_root::<Self>(&buf).unwrap();
+    //     Ok(archived.deserialize(&mut rkyv::Infallible)?)
+    // }
+    //
+    // pub fn save_to_disk(&self) -> Result<()> {
+    //     let metadata_file = PathBuf::from(&self.base_dir).join("topology.shmr-v0");
+    //
+    //     let buf = rkyv::to_bytes::<_, 256>(self)?;
+    //
+    //     let mut file = std::fs::File::create(&metadata_file)?;
+    //     file.write_all(&buf[..])?;
+    //
+    //     info!("wrote VirtualFile to disk at {:?}", metadata_file);
+    //     Ok(())
+    // }
     //
     // fn pool_map(&self) -> HashMap<String, PathBuf> {
     //     // TODO This is dirty. Bad.
@@ -155,7 +163,6 @@ mod tests {
         pool_map.insert("test_pool".to_string(), temp_dir.to_path_buf());
 
         let mut vf = VirtualFile {
-            base_dir: "/tmp".to_string(),
             size: 0,
             blocks: vec![],
             block_size: 1024,
@@ -181,7 +188,6 @@ mod tests {
         pool_map.insert("test_pool".to_string(), temp_dir.to_path_buf());
 
         let mut vf = VirtualFile {
-            base_dir: "/tmp".to_string(),
             size: 0,
             blocks: vec![],
             block_size: 128,
@@ -206,7 +212,6 @@ mod tests {
         pool_map.insert("test_pool".to_string(), temp_dir.to_path_buf());
 
         let mut vf = VirtualFile {
-            base_dir: "/tmp".to_string(),
             size: 0,
             blocks: vec![],
             block_size: 4096,
@@ -234,7 +239,6 @@ mod tests {
         pool_map.insert("test_pool".to_string(), temp_dir.to_path_buf());
 
         let mut vf = VirtualFile {
-            base_dir: base_dir.clone(),
             size: 0,
             blocks: vec![],
             block_size: 4096,
