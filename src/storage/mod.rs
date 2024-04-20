@@ -13,6 +13,10 @@ pub mod erasure;
 mod hash;
 pub mod ops;
 
+/// PoolMap is the data structure used to store topology information.
+/// (Pool Name => Bucket Name => Physical Path, Write Pool)
+pub type PoolMap = (HashMap<String, HashMap<String, PathBuf>>, String);
+
 /// Represent a Single StorageBlock, the basic component of a VirtualFile.
 ///
 /// For Single & Mirror types, the I/O operations are directly passed to the backing files.
@@ -38,32 +42,38 @@ pub enum StorageBlock {
     },
 }
 impl StorageBlock {
-    fn select_pool(pool: &HashMap<String, PathBuf>) -> &String {
+    /// Select a Bucket from the given Pool
+    fn select_bucket(pool: &str, map: &PoolMap) -> String {
         // TODO eventually we will want to be smart about how something from the pool is selected...
         //      for now, random!
         let mut rng = rand::thread_rng();
-        let candidate = pool.keys().nth(rng.gen_range(0..pool.len())).unwrap();
-        trace!("Selected pool: {:?}", candidate);
 
-        candidate
+        let buckets = map.0.get(pool).unwrap();
+
+        let candidate = buckets.keys().nth(rng.gen_range(0..pool.len())).unwrap();
+        trace!("selected bucket {} from pool {}", candidate, pool);
+
+        candidate.clone()
     }
     fn calculate_shard_size(length: usize, data_shards: usize) -> usize {
         (length as f32 / data_shards as f32).ceil() as usize
     }
 
     /// Initialize a Single StorageBlock
-    pub fn init_single(pool: &HashMap<String, PathBuf>) -> Result<Self> {
+    pub fn init_single(pool: &str, map: &PoolMap) -> Result<Self> {
         Ok(StorageBlock::Single(VirtualPathBuf {
-            pool: Self::select_pool(pool).clone(),
+            pool: pool.to_string(),
+            bucket: Self::select_bucket(pool, map),
             filename: format!("{}.dat", random_string()),
         }))
     }
 
     /// Initialize a Mirror StorageBlock, with n number of copies
-    pub fn init_mirror(pool: &HashMap<String, PathBuf>, copies: usize) -> Result<Self> {
+    pub fn init_mirror(pool: &str, map: &PoolMap, copies: usize) -> Result<Self> {
         let copies = (0..copies)
             .map(|_| VirtualPathBuf {
-                pool: Self::select_pool(pool).clone(),
+                pool: pool.to_string(),
+                bucket: Self::select_bucket(pool, map),
                 filename: format!("{}.dat", random_string()),
             })
             .collect();
@@ -71,10 +81,11 @@ impl StorageBlock {
         Ok(StorageBlock::Mirror(copies))
     }
 
-    pub fn init_ec(pool: &HashMap<String, PathBuf>, topology: (u8, u8), size: usize) -> Self {
+    pub fn init_ec(pool: &str, map: &PoolMap, topology: (u8, u8), size: usize) -> Self {
         let shards = (0..topology.0 + topology.1)
             .map(|_| VirtualPathBuf {
-                pool: Self::select_pool(pool).clone(),
+                pool: pool.to_string(),
+                bucket: Self::select_bucket(pool, map),
                 filename: format!("{}.dat", random_string()),
             })
             .collect();
@@ -88,18 +99,18 @@ impl StorageBlock {
     }
 
     /// Create the storage block, creating the necessary directories and files
-    pub fn create(&self, pool_map: &HashMap<String, PathBuf>) -> Result<()> {
+    pub fn create(&self, map: &PoolMap) -> Result<()> {
         match self {
-            StorageBlock::Single(path) => path.create(pool_map),
+            StorageBlock::Single(path) => path.create(map),
             StorageBlock::Mirror(copies) => {
                 for path in copies {
-                    path.create(pool_map)?;
+                    path.create(map)?;
                 }
                 Ok(())
             }
             StorageBlock::ReedSolomon { shards, .. } => {
                 for shard in shards {
-                    shard.create(pool_map)?;
+                    shard.create(map)?;
                 }
                 Ok(())
             }
@@ -109,16 +120,16 @@ impl StorageBlock {
     /// Read the contents of the StorageBlock into the given buffer starting at the given offset
     pub fn read(
         &self,
-        pool_map: &HashMap<String, PathBuf>,
+        map: &PoolMap,
         offset: usize,
         buf: &mut Vec<u8>,
     ) -> Result<usize> {
         match self {
-            StorageBlock::Single(path) => path.read(pool_map, offset, buf),
+            StorageBlock::Single(path) => path.read(map, offset, buf),
             StorageBlock::Mirror(copies) => {
                 // TODO Read in paralle, and return the first successful read
                 for path in copies {
-                    match path.read(pool_map, offset, buf) {
+                    match path.read(map, offset, buf) {
                         Ok(result) => return Ok(result),
                         Err(e) => eprintln!("Error reading from path: {:?}", e),
                     }
@@ -135,7 +146,7 @@ impl StorageBlock {
 
                 let ec_data = erasure::read(
                     &r,
-                    pool_map,
+                    map,
                     shards,
                     StorageBlock::calculate_shard_size(*size, r.data_shard_count()),
                 )?;
@@ -148,20 +159,20 @@ impl StorageBlock {
     /// Write the contents of the buffer to the StorageBlock at the given offset
     pub fn write(
         &self,
-        pool_map: &HashMap<String, PathBuf>,
+        map: &PoolMap,
         offset: usize,
         buf: &[u8],
     ) -> Result<usize> {
         debug!("writing {} bytes at offset {}", buf.len(), offset);
         match self {
-            StorageBlock::Single(path) => path.write(pool_map, offset, buf),
+            StorageBlock::Single(path) => path.write(map, offset, buf),
             StorageBlock::Mirror(copies) => {
                 // TODO Write in parallel, wait for all to finish
                 // Write to all the sync shards
                 let mut written = 0;
                 let mut i = 0;
                 for path in copies {
-                    written += path.write(pool_map, offset, buf)?;
+                    written += path.write(map, offset, buf)?;
                     i += 1;
                 }
                 Ok(written / i)
@@ -176,22 +187,22 @@ impl StorageBlock {
 
                 let shard_size = StorageBlock::calculate_shard_size(*size, r.data_shard_count());
 
-                let mut data = erasure::read(&r, pool_map, shards, shard_size)?;
+                let mut data = erasure::read(&r, map, shards, shard_size)?;
 
                 // update the buffer
                 data[offset..buf.len()].copy_from_slice(buf);
 
-                Ok(erasure::write(&r, pool_map, shards, shard_size, data)?)
+                Ok(erasure::write(&r, map, shards, shard_size, data)?)
             }
         }
     }
 
-    pub fn verify(&self, pool_map: &HashMap<String, PathBuf>) -> Result<bool> {
+    pub fn verify(&self, map: &PoolMap) -> Result<bool> {
         match self {
-            StorageBlock::Single(path) => Ok(path.exists(pool_map)),
+            StorageBlock::Single(path) => Ok(path.exists(map)),
             StorageBlock::Mirror(copies) => {
-                Ok(copies.iter().all(|path| path.exists(pool_map))
-                    && hash::compare(pool_map, copies))
+                Ok(copies.iter().all(|path| path.exists(map))
+                    && hash::compare(map, copies))
             }
             StorageBlock::ReedSolomon {
                 shards,
@@ -203,14 +214,14 @@ impl StorageBlock {
 
                 // verify all shards exist
                 for s in shards {
-                    if !s.exists(pool_map) {
+                    if !s.exists(map) {
                         warn!("Shard does not exist: {:?}", s);
                         return Ok(false);
                     }
                 }
 
                 let shards = erasure::read_ec_shards(
-                    pool_map,
+                    map,
                     shards,
                     &StorageBlock::calculate_shard_size(*size, r.data_shard_count()),
                 );
@@ -230,14 +241,14 @@ impl StorageBlock {
         }
     }
 
-    pub fn reconstruct(&self, _pool_map: &HashMap<String, PathBuf>) -> Result<()> {
+    pub fn reconstruct(&self, _pool_map: &PoolMap) -> Result<()> {
         todo!()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::StorageBlock;
+    use crate::storage::{PoolMap, StorageBlock};
     use crate::vpf::VirtualPathBuf;
     use crate::{random_data, random_string};
     use std::collections::HashMap;
@@ -250,7 +261,7 @@ mod tests {
         let temp_dir = Path::new("/tmp");
         let filename = random_string();
 
-        let mut pool_map: HashMap<String, PathBuf> = HashMap::new();
+        let mut pool_map: PoolMap = HashMap::new();
         pool_map.insert("test_pool".to_string(), temp_dir.to_path_buf());
 
         let sb = StorageBlock::Single(VirtualPathBuf {
@@ -288,7 +299,7 @@ mod tests {
         let filename1 = random_string();
         let filename2 = random_string();
 
-        let mut pool_map: HashMap<String, PathBuf> = HashMap::new();
+        let mut pool_map: PoolMap = HashMap::new();
         pool_map.insert("test_pool".to_string(), temp_dir.to_path_buf());
 
         let sb = StorageBlock::Mirror(vec![
@@ -346,7 +357,7 @@ mod tests {
     fn test_init_ec() {
         let shard_size = 1024 * 1024 * 1; // 1MB
 
-        let mut pool_map: HashMap<String, PathBuf> = HashMap::new();
+        let mut pool_map: PoolMap = HashMap::new();
         pool_map.insert("test_pool".to_string(), PathBuf::from("/tmp"));
 
         let ec_block = StorageBlock::init_ec(&pool_map, (3, 2), shard_size);
@@ -375,7 +386,7 @@ mod tests {
     fn test_ec_storage_block() {
         let shard_size = 1024 * 1024 * 1; // 1MB
 
-        let mut pool_map: HashMap<String, PathBuf> = HashMap::new();
+        let mut pool_map: PoolMap = HashMap::new();
         pool_map.insert("test_pool".to_string(), PathBuf::from("/tmp"));
 
         let ec_block = StorageBlock::init_ec(&pool_map, (3, 2), shard_size);
@@ -403,7 +414,7 @@ mod tests {
     fn test_ec_block_write_on_disk_data() {
         let data = random_data((1024 * 1024 * 1) + (1024 * 512));
 
-        let mut pool_map: HashMap<String, PathBuf> = HashMap::new();
+        let mut pool_map: PoolMap = HashMap::new();
         pool_map.insert("test_pool".to_string(), PathBuf::from("/tmp"));
 
         let ec_block = StorageBlock::init_ec(&pool_map, (3, 2), data.len());

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::ErrorKind;
 // Goal. Create enough of a FUSE filesystem to be able to list the contents of a directory, show that hello.txt exists, and read the contents of hello.txt.
 //       this can all be virtual. doesn't need to actually touch the filesystem.
@@ -25,7 +26,7 @@ struct PoolConfig {
   /// Pool Name
   name: String,
   /// Pool Paths
-  paths: Vec<PathBuf>,
+  paths: HashMap<String, PathBuf>
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FuseConfig {

@@ -2,14 +2,13 @@ use crate::vpf::VirtualPathBuf;
 use anyhow::Result;
 use log::{debug, error, trace, warn};
 use reed_solomon_erasure::galois_8::ReedSolomon;
-use std::collections::HashMap;
-use std::path::PathBuf;
 use std::time::Instant;
+use crate::storage::PoolMap;
 
 /// Read the given sets of shards, reconstruct the data if applicable, and return the encoded data
 pub fn read(
     r: &ReedSolomon,
-    pool_map: &HashMap<String, PathBuf>,
+    pool_map: &PoolMap,
     shards: &[VirtualPathBuf],
     shard_size: usize,
 ) -> Result<Vec<u8>> {
@@ -58,7 +57,7 @@ pub fn read(
 }
 
 pub fn read_ec_shards(
-    pool_map: &HashMap<String, PathBuf>,
+    pool_map: &PoolMap,
     shards: &[VirtualPathBuf],
     shard_size: &usize,
 ) -> Vec<Option<Vec<u8>>> {
@@ -89,7 +88,7 @@ pub fn read_ec_shards(
 /// is generated automatically
 pub fn write(
     r: &ReedSolomon,
-    pool_map: &HashMap<String, PathBuf>,
+    pool_map: &PoolMap,
     shards: &[VirtualPathBuf],
     shard_size: usize,
     buf: Vec<u8>,

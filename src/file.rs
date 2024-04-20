@@ -1,13 +1,19 @@
 // Goal: Run this to read in a file, and then create a VirtualFile from it.
 //       Then step through moving it from a single buffer file, to one with multiple StorageBlocks.
 //       Then do some I/O operations on it.
-use crate::storage::StorageBlock;
+use crate::storage::{PoolMap, StorageBlock};
 use anyhow::{Result};
 use log::{info, trace};
 use rkyv::{Archive, Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
+
+pub trait StoragePoolMap {
+    fn get(&self) -> HashMap<String, PathBuf>;
+    /// Return the New Write Path, which is where new blocks should be written to
+    fn new_write(&self) -> Result<HashMap<String, PathBuf>>;
+}
 
 #[derive(Debug, Archive, Serialize, Deserialize, Clone, PartialEq)]
 #[archive(compare(PartialEq), check_bytes)]
@@ -79,7 +85,7 @@ impl VirtualFile {
 
     pub fn read(
         &self,
-        pool_map: &HashMap<String, PathBuf>,
+        pool: &PoolMap,
         offset: u64,
         buf: &mut Vec<u8>,
     ) -> Result<usize> {
@@ -103,7 +109,7 @@ impl VirtualFile {
                 block_offset,
                 block_end
             );
-            read += block.read(pool_map, block_offset as usize, buf)?;
+            read += block.read(pool, block_offset as usize, buf)?;
         }
 
         Ok(read)
@@ -111,10 +117,11 @@ impl VirtualFile {
 
     pub fn write(
         &mut self,
-        pool_map: &HashMap<String, PathBuf>,
+        pool: &PoolMap,
         offset: u64,
         buf: &[u8],
     ) -> Result<usize> {
+
         // I'm switching back and forth between needing zero indexed data and non-zero indexed data :/
         let block_range = self.calculate_block_range(offset, buf.len() as u64);
         info!(
@@ -128,8 +135,9 @@ impl VirtualFile {
 
         for block_idx in block_range.clone() {
             if self.blocks.get(block_idx as usize).is_none() {
-                let sb = StorageBlock::init_single(pool_map)?;
-                sb.create(pool_map)?;
+                // This is where we would specify the pool name to create the StorageBlock on
+                let sb = StorageBlock::init_single(pool.1.as_str(), pool)?;
+                sb.create(pool)?;
                 self.blocks.push(sb);
             }
 
@@ -141,7 +149,7 @@ impl VirtualFile {
                 block_end = buf.len() as u64;
             }
             written += block.write(
-                pool_map,
+                pool,
                 block_offset as usize,
                 &buf[written..(block_end as usize)],
             )?;

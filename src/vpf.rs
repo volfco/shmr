@@ -1,10 +1,10 @@
 use anyhow::Context;
 use log::{debug, error, trace};
 use rkyv::{Archive, Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
+use crate::storage::PoolMap;
 
 /// VirtualPathBuf is like PathBuf, but the location of the pool is not stored in the path itself.
 /// Instead, it is provided as a parameter during operations.
@@ -13,19 +13,19 @@ use std::path::PathBuf;
 #[derive(Debug, Archive, Serialize, Deserialize, Clone, PartialEq)]
 #[archive(compare(PartialEq), check_bytes)]
 pub struct VirtualPathBuf {
-    /// Storage Pool ID, in UUID format
     pub pool: String,
-    /// Path to the file location in the Pool
+    pub bucket: String,
     pub filename: String,
 }
 impl VirtualPathBuf {
     /// Return the (Filename, Directory) for the file.
     /// It's inverted to avoid needing to create a copy of the directory name before joining the filename
-    fn get_path(&self, pool_map: &HashMap<String, PathBuf>) -> anyhow::Result<(PathBuf, PathBuf)> {
-        let mut path_buf = pool_map
-            .get(&self.pool)
-            .ok_or(anyhow::anyhow!("Invalid pool id"))?
-            .clone();
+    fn get_path(&self, map: &PoolMap) -> anyhow::Result<(PathBuf, PathBuf)> {
+        let pool_map = map.0.get(&self.pool)
+            .ok_or(anyhow::anyhow!("Invalid pool id"))?;
+
+        let mut path_buf = pool_map.get(&self.bucket)
+            .ok_or(anyhow::anyhow!("Invalid bucket id"))?.clone();
 
         path_buf.push(&self.filename[0..2]); // first two characters of the filename
         path_buf.push(&self.filename[2..4]); // next two characters of the filename
@@ -39,13 +39,13 @@ impl VirtualPathBuf {
         Ok(result)
     }
 
-    pub fn resolve_path(&self, pool_map: &HashMap<String, PathBuf>) -> anyhow::Result<PathBuf> {
-        let full_path = self.get_path(pool_map)?;
+    pub fn resolve_path(&self, map: &PoolMap) -> anyhow::Result<PathBuf> {
+        let full_path = self.get_path(map)?;
         Ok(full_path.1.join(full_path.0))
     }
 
-    pub fn exists(&self, pool_map: &HashMap<String, PathBuf>) -> bool {
-        match self.resolve_path(pool_map) {
+    pub fn exists(&self, map: &PoolMap) -> bool {
+        match self.resolve_path(map) {
             Ok(path) => path.exists(),
             Err(e) => {
                 error!("Error resolving path: {:?}", e);
@@ -54,8 +54,8 @@ impl VirtualPathBuf {
         }
     }
 
-    pub fn create(&self, pool_map: &HashMap<String, PathBuf>) -> anyhow::Result<()> {
-        let full_path = self.get_path(pool_map)?;
+    pub fn create(&self, map: &PoolMap) -> anyhow::Result<()> {
+        let full_path = self.get_path(map)?;
         let file_path = full_path.1.join(full_path.0);
 
         // ensure the directory exists
@@ -81,11 +81,11 @@ impl VirtualPathBuf {
 
     pub fn read(
         &self,
-        pool_map: &HashMap<String, PathBuf>,
+        map: &PoolMap,
         offset: usize,
         buf: &mut Vec<u8>,
     ) -> anyhow::Result<usize> {
-        let full_path = self.get_path(pool_map)?;
+        let full_path = self.get_path(map)?;
         let file_path = full_path.1.join(full_path.0);
 
         let mut file = File::open(&file_path).context(format!("opening {:?}", &file_path))?;
@@ -101,11 +101,11 @@ impl VirtualPathBuf {
 
     pub fn write(
         &self,
-        pool_map: &HashMap<String, PathBuf>,
+        map: &PoolMap,
         offset: usize,
         buf: &[u8],
     ) -> anyhow::Result<usize> {
-        let full_path = self.get_path(pool_map)?;
+        let full_path = self.get_path(map)?;
         let file_path = full_path.1.join(full_path.0);
 
         let mut file = OpenOptions::new()
@@ -127,8 +127,8 @@ impl VirtualPathBuf {
         Ok(written)
     }
 
-    pub fn delete(&self, pool_map: &HashMap<String, PathBuf>) -> anyhow::Result<()> {
-        let full_path = self.get_path(pool_map)?;
+    pub fn delete(&self, map: &PoolMap) -> anyhow::Result<()> {
+        let full_path = self.get_path(map)?;
         let file_path = full_path.1.join(full_path.0);
 
         std::fs::remove_file(&file_path).context(format!("removing {:?}", &file_path))?;

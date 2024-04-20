@@ -1,13 +1,13 @@
 use crate::vpf::VirtualPathBuf;
 use anyhow::Result;
 use seahash::SeaHasher;
-use std::collections::HashMap;
 use std::fs::File;
 use std::hash::Hasher;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
+use crate::storage::PoolMap;
 
-pub fn compare(pool_map: &HashMap<String, PathBuf>, stuff: &[VirtualPathBuf]) -> bool {
+pub fn compare(pool_map: &PoolMap, stuff: &[VirtualPathBuf]) -> bool {
     let mut hash = 0;
     for path in stuff {
         let file_path = path.resolve_path(pool_map).unwrap();

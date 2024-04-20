@@ -1,13 +1,12 @@
-use crate::storage::StorageBlock;
+use crate::storage::{PoolMap, StorageBlock};
 use anyhow::Result;
 use log::debug;
-use std::collections::HashMap;
-use std::path::PathBuf;
 
 /// Replaces the given StorageBlock with one that is Erasure Encoded.
 pub fn replace_with_ec(
     old: &StorageBlock,
-    pool_map: &HashMap<String, PathBuf>,
+    pool: &str,
+    pool_map: &PoolMap,
     new_topology: (u8, u8),
 ) -> Result<StorageBlock> {
     let mut contents = vec![];
@@ -15,7 +14,7 @@ pub fn replace_with_ec(
 
     assert!(m > 0, "read 0 bytes from storageblock");
 
-    let new_block = StorageBlock::init_ec(pool_map, new_topology, m);
+    let new_block = StorageBlock::init_ec(pool, pool_map, new_topology, m);
     new_block.create(pool_map)?;
 
     debug!("successfully created new storageblock");

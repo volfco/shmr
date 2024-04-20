@@ -1,4 +1,4 @@
-use fuser::{FileAttr, Filesystem, FileType, FUSE_ROOT_ID, KernelConfig, ReplyAttr, ReplyDirectory, ReplyEntry, ReplyOpen, Request, TimeOrNow};
+use fuser::{FileAttr, Filesystem, FileType, FUSE_ROOT_ID, KernelConfig, ReplyAttr, ReplyDirectory, ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow};
 use rkyv::{Archive, Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
@@ -149,6 +149,7 @@ impl From<Inode> for FileAttr {
         }
     }
 }
+
 
 #[derive(Debug, Archive, Serialize, Deserialize, Clone, PartialEq)]
 #[archive(compare(PartialEq), check_bytes)]
@@ -586,6 +587,60 @@ impl Filesystem for Shmr {
         }
 
         reply.ok();
+    }
+
+    fn write(&mut self, req: &Request<'_>, ino: u64, fh: u64, offset: i64, data: &[u8], write_flags: u32, flags: i32, lock_owner: Option<u64>, reply: ReplyWrite) {
+        trace!("FUSE({}) 'write' invoked on inode {} for fh {} starting at offset {}. data length: {}", req.unique(), ino, fh, offset, data.len());
+
+        assert!(offset >= 0);
+        // if !check_file_handle_write(fh) {
+        //   reply.error(libc::EACCES);
+        //   return;
+        // }
+
+        let mut file_inode = match self.fs_db.read_inode(ino) {
+            Ok(inode) => inode,
+            Err(e) => {
+                error!("Failed to read inode {}: {:?}", ino, e);
+                reply.error(libc::ENOENT);
+                return;
+            }
+        };
+        //
+        //
+        // // which block we're writing to
+        // let starting_block = match offset > 0 {
+        //     true => offset / file_inode.blksize as i64,
+        //     false => 0
+        // };
+        // let ending_block = ((offset + data.len() as i64) / file_inode.blksize as i64) + 1;
+        //
+        // debug!("Writing {} bytes to block {} ending at block {}", data.len(), starting_block, ending_block);
+        //
+        // let mut shards = vec![];
+        // for i in starting_block..ending_block {
+        //     let mut block_offset = 0;
+        //     if i == starting_block {
+        //         // we only need to worry about the offset on the first block
+        //         block_offset = offset % file_inode.blksize as i64;
+        //     }
+        //     let path = block_path.join(format!("{}_{}.bin", &ino, i));
+        //     trace!("Writing to {:?} at offset {}", path, block_offset);
+        //     //
+        //     // let mut fh = OpenOptions::new().write(true).create(true).open(path)?;
+        //     // fh.seek(SeekFrom::Start(block_offset as u64))?;
+        //     // fh.write_all(data)?;
+        //
+        //     // TODO Update the filesize if we're writing new blocks
+        //     // if data.len() + offset as usize > attrs.size as usize {
+        //     //   attrs.size = (data.len() + offset as usize) as u64;
+        //     // }
+        //
+        //     shards.push((String::new(), block_path.to_str().unwrap().to_string()))
+        // }
+
+        todo!()
+
     }
 
 }
