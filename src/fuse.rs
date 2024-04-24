@@ -279,7 +279,7 @@ impl Shmr {
             uid: req.uid(),
             gid,
             rdev,
-            blksize: 0,
+            blksize: 4096,
             flags: 0,
             xattrs: BTreeMap::new(),
         };
@@ -661,13 +661,20 @@ impl Filesystem for Shmr {
             }
         };
 
-        vf.write(&self.pool_map, offset as u64, data).map_err(|e| {
-            error!("Failed to write to file: {:?}", e);
-            libc::EIO
-        })?;
+        match vf.write(&self.pool_map, offset as u64, data) {
+            Ok(amount) => {
 
-        todo!()
+                self.fs_db.write_descriptor(ino, &InodeDescriptor::File(vf)).unwrap();
 
+
+                reply.written(amount as u32);
+            }
+            Err(e) => {
+                error!("Failed to write data to file: {:?}", e);
+                reply.error(libc::EIO);
+                return;
+            }
+        }
     }
 
     /// Open a directory.

@@ -51,7 +51,6 @@ mod tests {
     use super::*;
     use crate::random_string;
     use crate::tests::get_pool;
-    use std::collections::HashMap;
     use std::path::Path;
 
     #[test]
