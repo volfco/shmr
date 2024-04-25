@@ -14,7 +14,7 @@ use std::os::unix::prelude::OsStrExt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const MAX_NAME_LENGTH: u32 = 255;
-const DEFAULT_BLOCK_SIZE: u64 = 1024 * 1024 * 4; // 4MB
+const DEFAULT_BLOCK_SIZE: usize = 1024 * 1024 * 4; // 4MB
 
 #[allow(dead_code)]
 pub fn time_now() -> (i64, u32) {
@@ -609,9 +609,9 @@ impl Filesystem for Shmr {
         fh: u64,
         offset: i64,
         data: &[u8],
-        write_flags: u32,
-        flags: i32,
-        lock_owner: Option<u64>,
+        _write_flags: u32,
+        _flags: i32,
+        _lock_owner: Option<u64>,
         reply: ReplyWrite,
     ) {
         trace!(
@@ -629,7 +629,7 @@ impl Filesystem for Shmr {
         //   return;
         // }
 
-        let mut file_inode = match self.fs_db.read_inode(ino) {
+        let file_inode = match self.fs_db.read_inode(ino) {
             Ok(inode) => inode,
             Err(e) => {
                 error!("Failed to read inode {}: {:?}", ino, e);
@@ -661,7 +661,7 @@ impl Filesystem for Shmr {
             }
         };
 
-        match vf.write(&self.pool_map, offset as u64, data) {
+        match vf.write(&self.pool_map, data) {
             Ok(amount) => {
 
                 self.fs_db.write_descriptor(ino, &InodeDescriptor::File(vf)).unwrap();

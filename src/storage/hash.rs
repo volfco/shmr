@@ -51,11 +51,9 @@ mod tests {
     use super::*;
     use crate::random_string;
     use crate::tests::get_pool;
-    use std::path::Path;
 
     #[test]
     fn compare_identical_files() {
-        let temp_dir = Path::new("/tmp");
         let filename1 = random_string();
         let filename2 = random_string();
 
@@ -87,7 +85,6 @@ mod tests {
 
     #[test]
     fn compare_different_files() {
-        let temp_dir = Path::new("/tmp");
         let filename1 = random_string();
         let filename2 = random_string();
 

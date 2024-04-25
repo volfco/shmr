@@ -25,14 +25,14 @@ pub fn replace_with_ec(
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::ops::replace_with_ec;
-    use crate::storage::{PoolMap, StorageBlock};
-    use crate::tests::get_pool;
-    use crate::vpf::VirtualPathBuf;
-    use crate::{random_data, random_string};
-    use log::info;
-    use std::collections::HashMap;
-    use std::path::{Path, PathBuf};
+    // use crate::storage::ops::replace_with_ec;
+    // use crate::storage::{PoolMap, StorageBlock};
+    // use crate::tests::get_pool;
+    // use crate::vpf::VirtualPathBuf;
+    // use crate::{random_data, random_string};
+    // use log::info;
+    // use std::collections::HashMap;
+    // use std::path::{Path, PathBuf};
 
     // #[test]
     // fn rewrite_single_storageblock_to_ec() {
