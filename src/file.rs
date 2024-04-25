@@ -63,8 +63,11 @@ impl VirtualFile {
         let mut written = 0;
         let mut block_offset = self.cursor % self.block_size;
 
+        let mut last_write = 0;
+
         // loop over the blocks covered in this write call, and make sure we have blocks allocated
         // to cover the data in this write
+        let last_range = block_range.end().clone();
         for block_idx in block_range {
             // if the block we want to write to doesn't exist, create it
             if self.blocks.get(block_idx).is_none() {
@@ -78,10 +81,20 @@ impl VirtualFile {
             let buf_start = written;
             let buf_end = cmp::min(bf, written + self.block_size) - block_offset;
 
-            written += block.write(pool, block_offset, &buf[buf_start..buf_end])?;
+            let op = block.write(pool, block_offset, &buf[buf_start..buf_end])?;
+            written += op;
+            last_write = op + block_offset; // store the last write amount + write offset
 
             // reset the block cursor
             block_offset = 0;
+            info!("block idx: {}", block_idx);
+        }
+
+        if last_range + 1 == self.blocks.len() {
+            // if our write range covers the last block making up this file, then we can assume that
+            // the "file size" is (self.blocks.len() - 1) * self.block_size + (last write amount + last write offset)
+            // trace!("({} - 1) * {} + {}", self.blocks.len(), self.block_size, last_write);
+            self.size = (self.blocks.len() - 1) * self.block_size + last_write;
         }
 
         Ok(written)
@@ -108,9 +121,7 @@ impl VirtualFile {
 
         Ok(read)
     }
-
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -212,25 +223,25 @@ mod tests {
         // assert_eq!(result.unwrap(), 100);
         assert_eq!(read_buffer, buffer.as_slice()[100..200]);
     }
-    //
-    // #[test]
-    // fn test_virtual_file_write_size() {
-    //     let pool_map: PoolMap = get_pool();
-    //
-    //     let mut vf = VirtualFile {
-    //         size: 0,
-    //         blocks: vec![],
-    //         block_size: 128,
-    //         cursor: 0,
-    //     };
-    //
-    //     let buffer = random_data(200);
-    //     let result = vf.write(&pool_map, &buffer);
-    //     assert!(result.is_ok());
-    //     assert_eq!(result.unwrap(), 200);
-    //
-    //     assert_eq!(vf.size, 200);
-    // }
+
+    #[test]
+    fn test_virtual_file_write_size() {
+        let pool_map: PoolMap = get_pool();
+
+        let mut vf = VirtualFile {
+            size: 0,
+            blocks: vec![],
+            block_size: 128,
+            cursor: 0,
+        };
+
+        let buffer = random_data(200);
+        let result = vf.write(&pool_map, &buffer);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 200);
+
+        assert_eq!(vf.size, 200);
+    }
 
 
     #[test]
