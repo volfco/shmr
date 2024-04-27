@@ -1,5 +1,4 @@
-use std::cmp;
-use crate::file::VirtualFile;
+use crate::file::{DEFAULT_CHUNK_SIZE, VirtualFile};
 use crate::fsdb::FsDB;
 use crate::storage::PoolMap;
 use fuser::{FileAttr, FileType, Filesystem, KernelConfig, ReplyAttr, ReplyDirectory, ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow, FUSE_ROOT_ID, ReplyData};
@@ -276,7 +275,7 @@ impl Shmr {
             uid: req.uid(),
             gid,
             rdev,
-            blksize: 4096,
+            blksize: DEFAULT_CHUNK_SIZE as u32,
             flags: 0,
             xattrs: BTreeMap::new(),
         };
@@ -599,7 +598,7 @@ impl Filesystem for Shmr {
     //     todo!()
     // }
 
-    fn read(&mut self, req: &Request<'_>, ino: u64, fh: u64, offset: i64, size: u32, flags: i32, lock_owner: Option<u64>, reply: ReplyData) {
+    fn read(&mut self, req: &Request<'_>, ino: u64, fh: u64, offset: i64, size: u32, _flags: i32, _lock_owner: Option<u64>, reply: ReplyData) {
         trace!(
             "FUSE({}) 'read' invoked on inode {} for fh {} starting at offset {}. read size: {}",
             req.unique(),
@@ -646,11 +645,10 @@ impl Filesystem for Shmr {
 
         // TODO this might not work because offset might be negative?
         match vf.read(&self.pool_map, offset as usize, &mut buffer) {
-            Ok(amount) => reply.data(&buffer),
+            Ok(_) => reply.data(&buffer),
             Err(e) => {
                 error!("Failed to read data to file: {:?}", e);
-                reply.error(libc::EIO);
-                return;
+                reply.error(libc::EIO)
             }
         }
     }
@@ -682,7 +680,7 @@ impl Filesystem for Shmr {
         //   return;
         // }
 
-        let file_inode = match self.fs_db.read_inode(ino) {
+        let mut file_inode = match self.fs_db.read_inode(ino) {
             Ok(inode) => inode,
             Err(e) => {
                 error!("Failed to read inode {}: {:?}", ino, e);
@@ -716,16 +714,21 @@ impl Filesystem for Shmr {
 
         match vf.write(&self.pool_map, offset as usize, data) {
             Ok(amount) => {
+                // update the inode
+                file_inode.size = vf.size();
+                file_inode.blocks = vf.chunks();
+                file_inode.mtime = time_now();
+                file_inode.atime = time_now();
 
+                // write the updated descriptor, aka the VirtualFile
                 self.fs_db.write_descriptor(ino, &InodeDescriptor::File(vf)).unwrap();
-
+                self.fs_db.write_inode(ino, &file_inode).unwrap();
 
                 reply.written(amount as u32);
             }
             Err(e) => {
                 error!("Failed to write data to file: {:?}", e);
-                reply.error(libc::EIO);
-                return;
+                reply.error(libc::EIO)
             }
         }
     }

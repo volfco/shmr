@@ -121,7 +121,7 @@ impl StorageBlock {
 
     /// Read the contents of the StorageBlock into the given buffer starting at the given offset
     pub fn read(&self, map: &PoolMap, offset: usize, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() == 0 {
+        if buf.is_empty() {
             warn!("empty buffer passed to read function");
             return Ok(0);
         }
@@ -163,7 +163,7 @@ impl StorageBlock {
 
     /// Write the contents of the buffer to the StorageBlock at the given offset
     pub fn write(&self, map: &PoolMap, offset: usize, buf: &[u8]) -> Result<usize> {
-        if buf.len() == 0 {
+        if buf.is_empty() {
             warn!("empty buffer passed to read function");
             return Ok(0);
         }

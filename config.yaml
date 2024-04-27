@@ -1,0 +1,20 @@
+mount_dir: ./mnt
+metadata_dir: ./metadata
+pools:
+  pool0:
+    p0: ./pool0
+  pool1:
+    d0: ./pool1/0
+    d1: ./pool1/1
+
+  pool2:
+    sda: /mnt/sda
+    sdb: /mnt/sdb
+    sdc: /mnt/sdc
+    sdd: /mnt/sdd
+    sde: /mnt/sde
+    sdf: /mnt/sdf
+    sdg: /mnt/sdg
+    sdh: /mnt/sdh
+
+write_pool: pool0
