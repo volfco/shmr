@@ -1,7 +1,7 @@
 use std::cmp;
 use crate::random_string;
 use crate::vpf::VirtualPathBuf;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use log::{debug, trace, warn};
 use rand::Rng;
 use reed_solomon_erasure::galois_8::ReedSolomon;
@@ -12,6 +12,8 @@ use std::path::PathBuf;
 pub mod erasure;
 mod hash;
 pub mod ops;
+
+const DEFAULT_STORAGE_BLOCK_SIZE: usize = 1024 * 1024 * 1024; // 1MB
 
 /// PoolMap is the data structure used to store topology information.
 /// (Pool Name => Bucket Name => Physical Path, Write Pool)
@@ -27,9 +29,9 @@ pub type PoolMap = (HashMap<String, HashMap<String, PathBuf>>, String);
 #[archive(compare(PartialEq), check_bytes)]
 pub enum StorageBlock {
     /// Single Backing File
-    Single(VirtualPathBuf),
+    Single(usize, VirtualPathBuf),
     /// The contents of the StorageBlock are written to all files configured
-    Mirror(Vec<VirtualPathBuf>),
+    Mirror(usize, Vec<VirtualPathBuf>),
     ReedSolomon {
         /// Version of the Block. For now, only 1 is used
         version: u8,
@@ -61,7 +63,7 @@ impl StorageBlock {
 
     /// Initialize a Single StorageBlock
     pub fn init_single(pool: &str, map: &PoolMap) -> Result<Self> {
-        Ok(StorageBlock::Single(VirtualPathBuf {
+        Ok(StorageBlock::Single(DEFAULT_STORAGE_BLOCK_SIZE, VirtualPathBuf {
             pool: pool.to_string(),
             bucket: Self::select_bucket(pool, map),
             filename: format!("{}.dat", random_string()),
@@ -78,7 +80,7 @@ impl StorageBlock {
             })
             .collect();
 
-        Ok(StorageBlock::Mirror(copies))
+        Ok(StorageBlock::Mirror(DEFAULT_STORAGE_BLOCK_SIZE, copies))
     }
 
     pub fn init_ec(pool: &str, map: &PoolMap, topology: (u8, u8), size: usize) -> Self {
@@ -101,8 +103,8 @@ impl StorageBlock {
     /// Create the storage block, creating the necessary directories and files
     pub fn create(&self, map: &PoolMap) -> Result<()> {
         match self {
-            StorageBlock::Single(path) => path.create(map),
-            StorageBlock::Mirror(copies) => {
+            StorageBlock::Single(_, path) => path.create(map),
+            StorageBlock::Mirror(_, copies) => {
                 for path in copies {
                     path.create(map)?;
                 }
@@ -124,8 +126,8 @@ impl StorageBlock {
             return Ok(0);
         }
         match self {
-            StorageBlock::Single(path) => path.read(map, offset, buf),
-            StorageBlock::Mirror(copies) => {
+            StorageBlock::Single(_, path) => path.read(map, offset, buf),
+            StorageBlock::Mirror(_, copies) => {
                 // TODO Read in parallel, and return the first successful read
                 for path in copies {
                     match path.read(map, offset, buf) {
@@ -167,8 +169,15 @@ impl StorageBlock {
         }
         debug!("writing {} bytes at offset {}", buf.len(), offset);
         match self {
-            StorageBlock::Single(path) => path.write(map, offset, buf),
-            StorageBlock::Mirror(copies) => {
+            StorageBlock::Single(size, path) => {
+                if offset > *size {
+                    bail!("No Space Left")
+                }
+                path.write(map, offset, buf) },
+            StorageBlock::Mirror(size, copies) => {
+                if offset > *size {
+                    bail!("No Space Left")
+                }
                 // TODO Write in parallel, wait for all to finish
                 // Write to all the sync shards
                 let mut written = 0;
@@ -185,6 +194,9 @@ impl StorageBlock {
                 size,
                 ..
             } => {
+                if offset > *size {
+                    bail!("No Space Left")
+                }
                 let r = ReedSolomon::new(topology.0.into(), topology.1.into())?;
 
                 let shard_size = StorageBlock::calculate_shard_size(*size, r.data_shard_count());
@@ -201,8 +213,8 @@ impl StorageBlock {
 
     pub fn verify(&self, map: &PoolMap) -> Result<bool> {
         match self {
-            StorageBlock::Single(path) => Ok(path.exists(map)),
-            StorageBlock::Mirror(copies) => {
+            StorageBlock::Single(_, path) => Ok(path.exists(map)),
+            StorageBlock::Mirror(_, copies) => {
                 Ok(copies.iter().all(|path| path.exists(map)) && hash::compare(map, copies))
             }
             StorageBlock::ReedSolomon {
@@ -242,6 +254,14 @@ impl StorageBlock {
         }
     }
 
+    pub fn size(&self) -> usize {
+        match self {
+            StorageBlock::Single(size, _) => *size,
+            StorageBlock::Mirror(size, _) => *size,
+            StorageBlock::ReedSolomon { size, .. } => *size,
+        }
+    }
+
     pub fn reconstruct(&self, _pool_map: &PoolMap) -> Result<()> {
         todo!()
     }
@@ -260,7 +280,7 @@ mod tests {
 
         let pool_map = get_pool();
 
-        let sb = StorageBlock::Single(VirtualPathBuf {
+        let sb = StorageBlock::Single(DEFAULT_STORAGE_BLOCK_SIZE, VirtualPathBuf {
             pool: "test_pool".to_string(),
             bucket: "bucket1".to_string(),
             filename,
@@ -279,7 +299,7 @@ mod tests {
         assert_eq!(result.unwrap(), buf.len());
 
         // read the data back
-        if let StorageBlock::Single(path) = sb {
+        if let StorageBlock::Single(_, path) = sb {
             assert!(path.exists(&pool_map));
 
             let mut read_buffer = [0; 10];
@@ -297,7 +317,7 @@ mod tests {
 
         let pool_map = get_pool();
 
-        let sb = StorageBlock::Mirror(vec![
+        let sb = StorageBlock::Mirror(DEFAULT_STORAGE_BLOCK_SIZE, vec![
             VirtualPathBuf {
                 pool: "test_pool".to_string(),
                 bucket: "bucket1".to_string(),
@@ -315,7 +335,7 @@ mod tests {
         assert!(create.is_ok());
 
         let mirrors_exist = match &sb {
-            StorageBlock::Mirror(copies) => copies.iter().all(|path| path.exists(&pool_map)),
+            StorageBlock::Mirror(_, copies) => copies.iter().all(|path| path.exists(&pool_map)),
             _ => false,
         };
 
@@ -334,7 +354,7 @@ mod tests {
         assert!(read.is_ok());
         assert_eq!(tbuf, buf.as_slice());
 
-        if let StorageBlock::Mirror(copies) = sb {
+        if let StorageBlock::Mirror(_, copies) = sb {
             let mut buf1 = [0; 10];
             let mut buf2 = [0; 10];
 
@@ -358,7 +378,7 @@ mod tests {
 
         let ec_block = StorageBlock::init_ec(pool_map.1.as_str(), &pool_map, (3, 2), shard_size);
         let valid = match ec_block {
-            StorageBlock::Single(_) => false,
+            StorageBlock::Single( .. ) => false,
             StorageBlock::Mirror { .. } => false,
             StorageBlock::ReedSolomon {
                 version,

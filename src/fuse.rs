@@ -1,10 +1,8 @@
+use std::cmp;
 use crate::file::VirtualFile;
 use crate::fsdb::FsDB;
 use crate::storage::PoolMap;
-use fuser::{
-    FileAttr, FileType, Filesystem, KernelConfig, ReplyAttr, ReplyDirectory, ReplyEntry, ReplyOpen,
-    ReplyWrite, Request, TimeOrNow, FUSE_ROOT_ID,
-};
+use fuser::{FileAttr, FileType, Filesystem, KernelConfig, ReplyAttr, ReplyDirectory, ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow, FUSE_ROOT_ID, ReplyData};
 use libc::c_int;
 use log::{debug, error, info, trace, warn};
 use rkyv::{Archive, Deserialize, Serialize};
@@ -14,7 +12,6 @@ use std::os::unix::prelude::OsStrExt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const MAX_NAME_LENGTH: u32 = 255;
-const DEFAULT_BLOCK_SIZE: usize = 1024 * 1024 * 4; // 4MB
 
 #[allow(dead_code)]
 pub fn time_now() -> (i64, u32) {
@@ -292,7 +289,7 @@ impl Shmr {
             })?;
 
         let child_descriptor = match file_type {
-            libc::S_IFREG => InodeDescriptor::File(VirtualFile::new(DEFAULT_BLOCK_SIZE)),
+            libc::S_IFREG => InodeDescriptor::File(VirtualFile::new()),
             libc::S_IFLNK => InodeDescriptor::Symlink,
             libc::S_IFDIR => InodeDescriptor::Directory(BTreeMap::new()),
             _ => unimplemented!(),
@@ -602,6 +599,62 @@ impl Filesystem for Shmr {
     //     todo!()
     // }
 
+    fn read(&mut self, req: &Request<'_>, ino: u64, fh: u64, offset: i64, size: u32, flags: i32, lock_owner: Option<u64>, reply: ReplyData) {
+        trace!(
+            "FUSE({}) 'read' invoked on inode {} for fh {} starting at offset {}. read size: {}",
+            req.unique(),
+            ino,
+            fh,
+            offset,
+            size
+        );
+
+        assert!(offset >= 0);
+        let file_inode = match self.fs_db.read_inode(ino) {
+            Ok(inode) => inode,
+            Err(e) => {
+                error!("Failed to read inode {}: {:?}", ino, e);
+                reply.error(libc::ENOENT);
+                return;
+            }
+        };
+
+        if !file_inode.check_access(req.uid(), req.gid(), libc::W_OK) {
+            reply.error(libc::EACCES);
+            return;
+        }
+
+        let descriptor = match self.fs_db.read_descriptor(ino) {
+            Ok(descriptor) => descriptor,
+            Err(e) => {
+                error!("Failed to read descriptor {}: {:?}", ino, e);
+                reply.error(libc::EIO);
+                return;
+            }
+        };
+
+        let vf = match descriptor {
+            InodeDescriptor::File(vf) => vf,
+            _ => {
+                error!("Inode {} is not a file", ino);
+                reply.error(libc::EISDIR);
+                return;
+            }
+        };
+
+        let mut buffer = vec![0; vf.chunk_size];
+
+        // TODO this might not work because offset might be negative?
+        match vf.read(&self.pool_map, offset as usize, &mut buffer) {
+            Ok(amount) => reply.data(&buffer),
+            Err(e) => {
+                error!("Failed to read data to file: {:?}", e);
+                reply.error(libc::EIO);
+                return;
+            }
+        }
+    }
+
     fn write(
         &mut self,
         req: &Request<'_>,
@@ -661,7 +714,7 @@ impl Filesystem for Shmr {
             }
         };
 
-        match vf.write(&self.pool_map, data) {
+        match vf.write(&self.pool_map, offset as usize, data) {
             Ok(amount) => {
 
                 self.fs_db.write_descriptor(ino, &InodeDescriptor::File(vf)).unwrap();
