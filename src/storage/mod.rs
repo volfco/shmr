@@ -13,7 +13,7 @@ pub mod erasure;
 mod hash;
 pub mod ops;
 
-const DEFAULT_STORAGE_BLOCK_SIZE: usize = 1024 * 1024 * 1024; // 1MB
+const DEFAULT_STORAGE_BLOCK_SIZE: usize = 1024 * 1024 * 1; // 1MB
 
 /// PoolMap is the data structure used to store topology information.
 /// (Pool Name => Bucket Name => Physical Path, Write Pool)
