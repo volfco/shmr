@@ -1,3 +1,4 @@
+use crate::storage::PoolMap;
 use crate::vpf::VirtualPathBuf;
 use anyhow::Result;
 use seahash::SeaHasher;
@@ -5,7 +6,6 @@ use std::fs::File;
 use std::hash::Hasher;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
-use crate::storage::PoolMap;
 
 pub fn compare(pool_map: &PoolMap, stuff: &[VirtualPathBuf]) -> bool {
     let mut hash = 0;
@@ -48,15 +48,12 @@ fn hash_file(path: &PathBuf) -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use super::*;
     use crate::random_string;
-    use std::path::Path;
     use crate::tests::get_pool;
 
     #[test]
     fn compare_identical_files() {
-        let temp_dir = Path::new("/tmp");
         let filename1 = random_string();
         let filename2 = random_string();
 
@@ -88,7 +85,6 @@ mod tests {
 
     #[test]
     fn compare_different_files() {
-        let temp_dir = Path::new("/tmp");
         let filename1 = random_string();
         let filename2 = random_string();
 

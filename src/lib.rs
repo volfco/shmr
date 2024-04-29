@@ -20,9 +20,9 @@ pub fn random_data(size: usize) -> Vec<u8> {
 
 #[cfg(test)]
 pub mod tests {
+    use crate::storage::PoolMap;
     use std::collections::HashMap;
     use std::path::PathBuf;
-    use crate::storage::PoolMap;
 
     pub fn init() {
         let _ = env_logger::builder().is_test(true).try_init();

@@ -1,17 +1,19 @@
+use std::cmp;
 use crate::random_string;
 use crate::vpf::VirtualPathBuf;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use log::{debug, trace, warn};
 use rand::Rng;
 use reed_solomon_erasure::galois_8::ReedSolomon;
 use rkyv::{Archive, Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::Write;
 use std::path::PathBuf;
 
 pub mod erasure;
 mod hash;
 pub mod ops;
+
+const DEFAULT_STORAGE_BLOCK_SIZE: usize = 1024 * 1024 * 1; // 1MB
 
 /// PoolMap is the data structure used to store topology information.
 /// (Pool Name => Bucket Name => Physical Path, Write Pool)
@@ -27,9 +29,9 @@ pub type PoolMap = (HashMap<String, HashMap<String, PathBuf>>, String);
 #[archive(compare(PartialEq), check_bytes)]
 pub enum StorageBlock {
     /// Single Backing File
-    Single(VirtualPathBuf),
+    Single(usize, VirtualPathBuf),
     /// The contents of the StorageBlock are written to all files configured
-    Mirror(Vec<VirtualPathBuf>),
+    Mirror(usize, Vec<VirtualPathBuf>),
     ReedSolomon {
         /// Version of the Block. For now, only 1 is used
         version: u8,
@@ -61,7 +63,7 @@ impl StorageBlock {
 
     /// Initialize a Single StorageBlock
     pub fn init_single(pool: &str, map: &PoolMap) -> Result<Self> {
-        Ok(StorageBlock::Single(VirtualPathBuf {
+        Ok(StorageBlock::Single(DEFAULT_STORAGE_BLOCK_SIZE, VirtualPathBuf {
             pool: pool.to_string(),
             bucket: Self::select_bucket(pool, map),
             filename: format!("{}.dat", random_string()),
@@ -78,7 +80,7 @@ impl StorageBlock {
             })
             .collect();
 
-        Ok(StorageBlock::Mirror(copies))
+        Ok(StorageBlock::Mirror(DEFAULT_STORAGE_BLOCK_SIZE, copies))
     }
 
     pub fn init_ec(pool: &str, map: &PoolMap, topology: (u8, u8), size: usize) -> Self {
@@ -98,11 +100,23 @@ impl StorageBlock {
         }
     }
 
+    pub fn is_single(&self) -> bool {
+        matches!(self, StorageBlock::Single(_, _))
+    }
+
+    pub fn is_mirror(&self) -> bool {
+        matches!(self, StorageBlock::Mirror(_, _))
+    }
+
+    pub fn is_ec(&self) -> bool {
+        matches!(self, StorageBlock::ReedSolomon { .. })
+    }
+
     /// Create the storage block, creating the necessary directories and files
     pub fn create(&self, map: &PoolMap) -> Result<()> {
         match self {
-            StorageBlock::Single(path) => path.create(map),
-            StorageBlock::Mirror(copies) => {
+            StorageBlock::Single(_, path) => path.create(map),
+            StorageBlock::Mirror(_, copies) => {
                 for path in copies {
                     path.create(map)?;
                 }
@@ -118,16 +132,15 @@ impl StorageBlock {
     }
 
     /// Read the contents of the StorageBlock into the given buffer starting at the given offset
-    pub fn read(
-        &self,
-        map: &PoolMap,
-        offset: usize,
-        buf: &mut Vec<u8>,
-    ) -> Result<usize> {
+    pub fn read(&self, map: &PoolMap, offset: usize, buf: &mut [u8]) -> Result<usize> {
+        if buf.is_empty() {
+            // warn!("empty buffer passed to read function");
+            return Ok(0);
+        }
         match self {
-            StorageBlock::Single(path) => path.read(map, offset, buf),
-            StorageBlock::Mirror(copies) => {
-                // TODO Read in paralle, and return the first successful read
+            StorageBlock::Single(_, path) => path.read(map, offset, buf),
+            StorageBlock::Mirror(_, copies) => {
+                // TODO Read in parallel, and return the first successful read
                 for path in copies {
                     match path.read(map, offset, buf) {
                         Ok(result) => return Ok(result),
@@ -150,23 +163,33 @@ impl StorageBlock {
                     shards,
                     StorageBlock::calculate_shard_size(*size, r.data_shard_count()),
                 )?;
-
-                Ok(buf.write(&ec_data[offset..*size])?)
+                let mut write = 0;
+                for slot in 0..cmp::min(buf.len(), ec_data.len()) {
+                    buf[slot] = ec_data[offset + slot];
+                    write += 1;
+                }
+                Ok(write)
             }
         }
     }
 
     /// Write the contents of the buffer to the StorageBlock at the given offset
-    pub fn write(
-        &self,
-        map: &PoolMap,
-        offset: usize,
-        buf: &[u8],
-    ) -> Result<usize> {
+    pub fn write(&self, map: &PoolMap, offset: usize, buf: &[u8]) -> Result<usize> {
+        if buf.is_empty() {
+            // warn!("empty buffer passed to read function");
+            return Ok(0);
+        }
         debug!("writing {} bytes at offset {}", buf.len(), offset);
         match self {
-            StorageBlock::Single(path) => path.write(map, offset, buf),
-            StorageBlock::Mirror(copies) => {
+            StorageBlock::Single(size, path) => {
+                if offset > *size {
+                    bail!("No Space Left")
+                }
+                path.write(map, offset, buf) },
+            StorageBlock::Mirror(size, copies) => {
+                if offset > *size {
+                    bail!("No Space Left")
+                }
                 // TODO Write in parallel, wait for all to finish
                 // Write to all the sync shards
                 let mut written = 0;
@@ -183,6 +206,9 @@ impl StorageBlock {
                 size,
                 ..
             } => {
+                if offset > *size {
+                    bail!("No Space Left")
+                }
                 let r = ReedSolomon::new(topology.0.into(), topology.1.into())?;
 
                 let shard_size = StorageBlock::calculate_shard_size(*size, r.data_shard_count());
@@ -199,10 +225,9 @@ impl StorageBlock {
 
     pub fn verify(&self, map: &PoolMap) -> Result<bool> {
         match self {
-            StorageBlock::Single(path) => Ok(path.exists(map)),
-            StorageBlock::Mirror(copies) => {
-                Ok(copies.iter().all(|path| path.exists(map))
-                    && hash::compare(map, copies))
+            StorageBlock::Single(_, path) => Ok(path.exists(map)),
+            StorageBlock::Mirror(_, copies) => {
+                Ok(copies.iter().all(|path| path.exists(map)) && hash::compare(map, copies))
             }
             StorageBlock::ReedSolomon {
                 shards,
@@ -241,6 +266,14 @@ impl StorageBlock {
         }
     }
 
+    pub fn size(&self) -> usize {
+        match self {
+            StorageBlock::Single(size, _) => *size,
+            StorageBlock::Mirror(size, _) => *size,
+            StorageBlock::ReedSolomon { size, .. } => *size,
+        }
+    }
+
     pub fn reconstruct(&self, _pool_map: &PoolMap) -> Result<()> {
         todo!()
     }
@@ -248,22 +281,18 @@ impl StorageBlock {
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::{StorageBlock};
-    use crate::vpf::VirtualPathBuf;
-    use crate::{random_data, random_string};
+    use crate::random_data;
     use super::*;
-    use std::path::{Path};
     use crate::tests::get_pool;
     // TODO Add tests for verifying the data
 
     #[test]
     fn test_single_storage_block() {
-        let temp_dir = Path::new("/tmp");
         let filename = random_string();
 
         let pool_map = get_pool();
 
-        let sb = StorageBlock::Single(VirtualPathBuf {
+        let sb = StorageBlock::Single(DEFAULT_STORAGE_BLOCK_SIZE, VirtualPathBuf {
             pool: "test_pool".to_string(),
             bucket: "bucket1".to_string(),
             filename,
@@ -282,26 +311,25 @@ mod tests {
         assert_eq!(result.unwrap(), buf.len());
 
         // read the data back
-        if let StorageBlock::Single(path) = sb {
+        if let StorageBlock::Single(_, path) = sb {
             assert!(path.exists(&pool_map));
 
-            let mut read_buffer = vec![];
+            let mut read_buffer = [0; 10];
             let result = path.read(&pool_map, offset, &mut read_buffer);
 
             assert!(result.is_ok());
-            assert_eq!(read_buffer, buf);
+            assert_eq!(read_buffer, buf.as_slice());
         }
     }
 
     #[test]
     fn test_mirror_storage_block() {
-        let temp_dir = Path::new("/tmp");
         let filename1 = random_string();
         let filename2 = random_string();
 
         let pool_map = get_pool();
 
-        let sb = StorageBlock::Mirror(vec![
+        let sb = StorageBlock::Mirror(DEFAULT_STORAGE_BLOCK_SIZE, vec![
             VirtualPathBuf {
                 pool: "test_pool".to_string(),
                 bucket: "bucket1".to_string(),
@@ -319,7 +347,7 @@ mod tests {
         assert!(create.is_ok());
 
         let mirrors_exist = match &sb {
-            StorageBlock::Mirror(copies) => copies.iter().all(|path| path.exists(&pool_map)),
+            StorageBlock::Mirror(_, copies) => copies.iter().all(|path| path.exists(&pool_map)),
             _ => false,
         };
 
@@ -333,14 +361,14 @@ mod tests {
         assert_eq!(op.unwrap(), buf.len());
 
         // read the data back
-        let mut tbuf = vec![];
+        let mut tbuf = [0; 10];
         let read = sb.read(&pool_map, offset, &mut tbuf);
         assert!(read.is_ok());
-        assert_eq!(tbuf, buf);
+        assert_eq!(tbuf, buf.as_slice());
 
-        if let StorageBlock::Mirror(copies) = sb {
-            let mut buf1 = vec![];
-            let mut buf2 = vec![];
+        if let StorageBlock::Mirror(_, copies) = sb {
+            let mut buf1 = [0; 10];
+            let mut buf2 = [0; 10];
 
             let read1 = copies[0].read(&pool_map, offset, &mut buf1);
             assert!(read1.is_ok());
@@ -349,8 +377,8 @@ mod tests {
             assert!(read2.is_ok());
 
             assert_eq!(buf2, buf1);
-            assert_eq!(buf1, buf);
-            assert_eq!(buf2, buf);
+            assert_eq!(buf1, buf.as_slice());
+            assert_eq!(buf2, buf.as_slice());
         }
     }
 
@@ -362,7 +390,7 @@ mod tests {
 
         let ec_block = StorageBlock::init_ec(pool_map.1.as_str(), &pool_map, (3, 2), shard_size);
         let valid = match ec_block {
-            StorageBlock::Single(_) => false,
+            StorageBlock::Single( .. ) => false,
             StorageBlock::Mirror { .. } => false,
             StorageBlock::ReedSolomon {
                 version,
@@ -403,10 +431,10 @@ mod tests {
         assert!(ec_shards_exist, "Not all ec shards exist on disk");
 
         // read the first 10 bytes to make sure it's empty
-        let mut tbuf = vec![];
+        let mut tbuf = [0; 10];
         let read = ec_block.read(&pool_map, 0, &mut tbuf);
         assert!(read.is_ok(), "Error reading: {:?}", read);
-        assert_eq!(tbuf[0..10], vec![0; 10]);
+        assert_eq!(tbuf[0..10], [0; 10]);
     }
 
     #[test]
@@ -423,19 +451,18 @@ mod tests {
 
         let write = ec_block.write(&pool_map, 0, &data);
         assert!(write.is_ok());
-        // assert_eq!(write.unwrap(), data.len());
 
         if let StorageBlock::ReedSolomon { shards, size, .. } = ec_block {
             let shard_size = StorageBlock::calculate_shard_size(size, 3);
 
-            let mut tbuf = vec![];
+            let mut tbuf = [0; 524288];
             let read = shards[0].read(&pool_map, 0, &mut tbuf);
             assert!(read.is_ok());
 
             // the data from the shard should match
             assert_eq!(tbuf, data[..shard_size]);
 
-            let mut tbuf = vec![];
+            let mut tbuf = [0; 524288];
             let read = shards[1].read(&pool_map, 0, &mut tbuf);
             assert!(read.is_ok());
 

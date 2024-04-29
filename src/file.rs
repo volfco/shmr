@@ -1,13 +1,18 @@
+use std::cmp;
 // Goal: Run this to read in a file, and then create a VirtualFile from it.
 //       Then step through moving it from a single buffer file, to one with multiple StorageBlocks.
 //       Then do some I/O operations on it.
 use crate::storage::{PoolMap, StorageBlock};
-use anyhow::{Result};
-use log::{info, trace};
+use anyhow::{bail, Result};
+use log::trace;
 use rkyv::{Archive, Deserialize, Serialize};
 use std::collections::HashMap;
-use std::ops::RangeInclusive;
 use std::path::PathBuf;
+
+/// Default Chunk Size. Also used as the inode block size for FUSE stuffs
+///
+/// It is undefined behavior if this doesn't cleanly mathphs with the other defaults
+pub(crate) const DEFAULT_CHUNK_SIZE: usize = 4096;
 
 pub trait StoragePoolMap {
     fn get(&self) -> HashMap<String, PathBuf>;
@@ -18,143 +23,119 @@ pub trait StoragePoolMap {
 #[derive(Debug, Archive, Serialize, Deserialize, Clone, PartialEq)]
 #[archive(compare(PartialEq), check_bytes)]
 pub struct VirtualFile {
-    /// File size, in bytes
-    #[allow(dead_code)]
-    size: u64,
+    pub size: usize,
+    pub chunk_size: usize,
+    /// Chunk Map, mapping each chunk of the file to it's underlying StorageBlock
+    chunk_map: Vec<(usize, usize)>,
 
     /// List of StorageBlocks, in order, that make up the file
-    blocks: Vec<StorageBlock>,
-
-    /// Size of each block, in bytes
-    /// Used to calculate the block number to send I/O operations to. Additionally, used to size
-    /// erasure encoded shards.
-    block_size: u64,
+    pub blocks: Vec<StorageBlock>
+}
+impl Default for VirtualFile {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 impl VirtualFile {
-    pub fn new(block_size: u64) -> Self {
+    pub fn new() -> Self {
         VirtualFile {
             size: 0,
-            blocks: vec![],
-            block_size,
+            chunk_size: 4096,
+            chunk_map: vec![],
+            blocks: vec![]
         }
     }
 
-    // /// path is the file location, on disk
-    // /// block_size is the size of each block, in bytes
-    // pub fn open(path: impl Into<PathBuf>) -> Result<Self> {
-    //     let metadata_file = path.into().join("topology.shmr-v0");
-    //     if !metadata_file.exists() {
-    //         bail!("File not found: {:?}", metadata_file);
-    //     }
-    //
-    //     let mut file = std::fs::File::open(&metadata_file)?;
-    //     let mut buf = vec![];
-    //     let _ = file.read_to_end(&mut buf)?;
-    //
-    //     let archived = rkyv::check_archived_root::<Self>(&buf).unwrap();
-    //     Ok(archived.deserialize(&mut rkyv::Infallible)?)
-    // }
-    //
-    // pub fn save_to_disk(&self) -> Result<()> {
-    //     let metadata_file = PathBuf::from(&self.base_dir).join("topology.shmr-v0");
-    //
-    //     let buf = rkyv::to_bytes::<_, 256>(self)?;
-    //
-    //     let mut file = std::fs::File::create(&metadata_file)?;
-    //     file.write_all(&buf[..])?;
-    //
-    //     info!("wrote VirtualFile to disk at {:?}", metadata_file);
-    //     Ok(())
-    // }
-    //
-    // fn pool_map(&self) -> HashMap<String, PathBuf> {
-    //     // TODO This is dirty. Bad.
-    //     let mut map = HashMap::new();
-    //     map.insert("default".to_string(), PathBuf::from(&self.base_dir));
-    //     map
-    // }
-
-    fn calculate_block_range(&self, offset: u64, buf_len: u64) -> RangeInclusive<u64> {
-        let starting_block = match offset > 0 {
-            true => offset / self.block_size,
-            false => 0,
-        };
-        let ending_block = starting_block + (buf_len / self.block_size);
-        starting_block..=ending_block
+    /// Return the known filesize
+    pub fn size(&self) -> u64 {
+        self.size as u64
     }
 
-    pub fn read(
-        &self,
-        pool: &PoolMap,
-        offset: u64,
-        buf: &mut Vec<u8>,
-    ) -> Result<usize> {
-        // the upper bound of the block range is the total number of blocks we have
-        let block_range = (match offset > 0 {
-            true => offset / self.block_size,
-            false => 0,
-        })..self.blocks.len() as u64;
+    /// Return the number of chunks in the Chunk Map
+    pub fn chunks(&self) -> u64 {
+        self.chunk_map.len() as u64
+    }
 
-        trace!("reading blocks: {:?} with offset {}", &block_range, offset);
+    /// Allocate a new StorageBlock then extend the chunk map
+    fn allocate_block(&mut self, pool: &PoolMap) -> Result<()> {
+        // TODO Improve the logic when selecting which pool to select from
+        let sb = StorageBlock::init_single(pool.1.as_str(), pool)?;
+        sb.create(pool)?;
 
-        let mut read = 0;
-        // keep reading until we can't put anymore into the buffer
-        for block_idx in block_range {
-            let block = self.blocks.get(block_idx as usize).unwrap();
-            let block_offset = (block_idx * self.block_size) - offset;
-            let block_end = block_offset + self.block_size;
-            trace!(
-                "reading block {} from offset {} to {}",
-                block_idx,
-                block_offset,
-                block_end
-            );
-            read += block.read(pool, block_offset as usize, buf)?;
+        // extend the chunk map
+        let block_idx = self.blocks.len();
+        for i in 0..(sb.size() / self.chunk_size) {
+            self.chunk_map.push((block_idx, self.chunk_size * i));
+        }
+
+        self.blocks.push(sb);
+        Ok(())
+    }
+
+    pub fn write(&mut self, pool: &PoolMap, pos: usize, buf: &[u8]) -> Result<usize> {
+        let bf = buf.len();
+        if bf == 0 {
+            trace!("write request buf len == 0. nothing to do");
+            return Ok(0);
+        }
+
+        if pos % self.chunk_size != 0 {
+            panic!("cursor position does not align with block size")
+        }
+
+        let mut written = 0;
+        for chunk_idx in (pos / self.chunk_size)..=((pos + bf) / self.chunk_size) {
+            // allocate a new block if we're out of space to write the chunk
+            if self.chunk_map.is_empty() || self.chunk_map.len() <= chunk_idx {
+                self.allocate_block(pool)?;
+            }
+            let (block_idx, block_pos) = self.chunk_map.get(chunk_idx).unwrap_or_else(|| panic!("chunk_idx: {}. chunk_map len: {}", chunk_idx, self.chunk_map.len()) );
+
+            let buf_end = cmp::min(written + self.chunk_size, bf);
+            written += self.blocks[*block_idx].write(pool, *block_pos, &buf[written..buf_end])?;
+        }
+
+        // size is the largest (offset + written buffer)
+        self.size = cmp::max(self.size, pos + bf);
+
+        Ok(written)
+    }
+
+    /// Read `size` bytes from VirtualFile, starting at the given offset, into the buffer.
+    pub fn read(&self, pool: &PoolMap, pos: usize, buf: &mut [u8]) -> Result<usize> {
+        let bf = buf.len();
+        if bf == 0 {
+            trace!("write request buf len == 0. nothing to do");
+            return Ok(0);
+        }
+
+        if pos > self.size {
+            bail!("EOF")
+        }
+
+        let mut read = 0;  // amount read
+        let mut chk_pos = pos % self.chunk_size;  // initial chunk offset
+        let pos_chk = pos / self.chunk_size;
+        let buf_chk = bf / self.chunk_size + (chk_pos != 0) as usize;  // got this nifty solution off Reddit. Thanks /u/HeroicKatora
+
+        let chunk_range = pos_chk..=pos_chk+buf_chk;
+
+        for idx in chunk_range {
+            let (block_idx, block_pos) = self.chunk_map.get(idx).expect("wtf bro");
+
+            // we might get a read that starts in the middle a chunk
+            // in that case, just move the block cursor forward the amount of the chunk offset
+            let read_pos = *block_pos + chk_pos;
+            let read_amt = cmp::min(bf, read + self.chunk_size - chk_pos);
+
+            trace!("reading {} bytes from chunk {} (mapping to block_idx:{} / block_pos:{} / read_pos:{})", read_amt, idx, block_idx, block_pos, read_pos);
+
+            read += &self.blocks[*block_idx].read(pool, read_pos, &mut buf[read..read_amt])?;
+
+            chk_pos = 0;
         }
 
         Ok(read)
-    }
-
-    pub fn write(
-        &mut self,
-        pool: &PoolMap,
-        offset: u64,
-        buf: &[u8],
-    ) -> Result<usize> {
-
-        // I'm switching back and forth between needing zero indexed data and non-zero indexed data :/
-        let block_range = self.calculate_block_range(offset, buf.len() as u64);
-        info!(
-            "writing {} bytes, starting at offset {}. target block range: {:?}",
-            buf.len(),
-            offset,
-            &block_range
-        );
-
-        let mut written = 0;
-
-        for block_idx in block_range.clone() {
-            if self.blocks.get(block_idx as usize).is_none() {
-                // This is where we would specify the pool name to create the StorageBlock on
-                let sb = StorageBlock::init_single(pool.1.as_str(), pool)?;
-                sb.create(pool)?;
-                self.blocks.push(sb);
-            }
-
-            let block = self.blocks.get(block_idx as usize).unwrap();
-
-            let block_offset = (block_idx * self.block_size) - offset;
-            let mut block_end = block_offset + self.block_size;
-            if block_end > buf.len() as u64 {
-                block_end = buf.len() as u64;
-            }
-            written += block.write(
-                pool,
-                block_offset as usize,
-                &buf[written..(block_end as usize)],
-            )?;
-        }
-        Ok(written)
     }
 }
 
@@ -163,17 +144,16 @@ mod tests {
     use super::*;
     use crate::random_data;
     use crate::tests::get_pool;
-    use std::path::Path;
 
     #[test]
     fn test_virtual_file_write_one_block() {
-        let temp_dir = Path::new("/tmp");
         let pool_map: PoolMap = get_pool();
 
         let mut vf = VirtualFile {
             size: 0,
+            chunk_size: 16,
+            chunk_map: vec![],
             blocks: vec![],
-            block_size: 1024,
         };
 
         let buffer = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
@@ -182,22 +162,22 @@ mod tests {
         assert_eq!(result.unwrap(), 10);
 
         // read it back
-        let mut read_buffer = vec![];
+        let mut read_buffer = [0; 10];
         let result = vf.read(&pool_map, 0, &mut read_buffer);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 10);
-        assert_eq!(read_buffer, buffer);
+        assert_eq!(read_buffer, buffer.as_slice());
     }
 
     #[test]
     fn test_virtual_file_write_two_blocks() {
-        let temp_dir = Path::new("/tmp");
         let pool_map: PoolMap = get_pool();
 
         let mut vf = VirtualFile {
             size: 0,
+            chunk_size: 128,
+            chunk_map: vec![],
             blocks: vec![],
-            block_size: 128,
         };
 
         let buffer = random_data(200);
@@ -205,22 +185,105 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 200);
 
+
         // read it back
-        let mut read_buffer = vec![];
+        let mut read_buffer = [0; 200];
         let result = vf.read(&pool_map, 0, &mut read_buffer);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 200);
-        assert_eq!(read_buffer, buffer);
+        assert_eq!(read_buffer, buffer.as_slice());
     }
+
     #[test]
-    fn test_virtual_file_write_lots_of_blocks_1() {
-        let temp_dir = Path::new("/tmp");
+    fn test_virtual_file_offset_read() {
         let pool_map: PoolMap = get_pool();
 
         let mut vf = VirtualFile {
             size: 0,
+            chunk_size: 16,
+            chunk_map: vec![],
             blocks: vec![],
-            block_size: 4096,
+        };
+
+        let buffer = random_data(40);
+        let result = vf.write(&pool_map, 0, &buffer);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 40);
+
+        // 192, 92, 37, 64, 198, 38, 220, 129, 178, 52, 71, 6, 67, 8, 48, 134, 35, 13, 161, 210, 198, 129, 44, 38, 215, 245, 17, 87, 120, 125, 185, 65, 138, 218, 230, 29, 125, 189, 113, 50
+
+        //                                                                     35, 13, 161, 210, 198, 129, 44, 38, 215, 245, 17, 87, 120, 125, 185, 65, 138, 218, 230, 29
+        //                                                                                       198, 129, 44, 38, 215, 245, 17, 87, 120, 125, 185, 65, 138, 218, 230, 29, 125, 189, 113, 50
+
+        // read it back
+        let mut read_buffer = [0; 20];
+        let result = vf.read(&pool_map, 20, &mut read_buffer);
+        assert!(result.is_ok());
+        // assert_eq!(result.unwrap(), 100);
+        assert_eq!(read_buffer, buffer.as_slice()[20..40]);
+    }
+
+    #[test]
+    fn test_virtual_file_two_block_offset_read() {
+        let pool_map: PoolMap = get_pool();
+
+        let mut vf = VirtualFile {
+            size: 0,
+            chunk_size: 128,
+            chunk_map: vec![],
+            blocks: vec![],
+        };
+
+        let buffer = random_data(200);
+        let result = vf.write(&pool_map, 0, &buffer);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 200);
+        //
+        // // read back block 0
+        // let mut nb = [0; 200];
+        // vf.blocks[0].read(&pool_map, 0, &mut nb).unwrap();
+        // assert_eq!(buffer[0..128], nb[0..128]);
+        //
+        // // read back block 1
+        // let mut nb = [0; 200];
+        // vf.blocks[1].read(&pool_map, 0, &mut nb).unwrap();
+        // assert_eq!(buffer[128..200], nb[0..72]);
+
+        // read it back
+        let mut read_buffer = [0; 100];
+        let result = vf.read(&pool_map, 100, &mut read_buffer);
+        assert!(result.is_ok());
+        // assert_eq!(result.unwrap(), 100);
+        assert_eq!(read_buffer, buffer.as_slice()[100..200]);
+    }
+    #[test]
+    fn test_virtual_file_write_size() {
+        let pool_map: PoolMap = get_pool();
+
+        let mut vf = VirtualFile {
+            size: 0,
+            chunk_size: 128,
+            chunk_map: vec![],
+            blocks: vec![],
+        };
+
+        let buffer = random_data(200);
+        let result = vf.write(&pool_map, 0, &buffer);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 200);
+
+        assert_eq!(vf.size, 200);
+    }
+
+    #[test]
+    fn test_virtual_file_write_lots_of_blocks_1() {
+        let pool_map: PoolMap = get_pool();
+
+        let mut vf = VirtualFile {
+            size: 0,
+            chunk_size: 128,
+            chunk_map: vec![],
+            blocks: vec![],
         };
 
         let buffer = random_data(199990);
@@ -229,54 +292,10 @@ mod tests {
         assert_eq!(result.unwrap(), 199990);
 
         // read it back
-        let mut read_buffer = vec![];
+        let mut read_buffer = [0; 199990];
         let result = vf.read(&pool_map, 0, &mut read_buffer);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 199990);
-        assert_eq!(read_buffer, buffer);
+        assert_eq!(read_buffer, buffer.as_slice());
     }
-
-    // // test writing the virtualfile to disk, and then read it back as a new object
-    // #[test]
-    // fn test_virtual_file_save_to_disk() {
-    //     let base_dir = "/tmp".to_string();
-    //     let temp_dir = Path::new("/tmp");
-    //     let pool_map: PoolMap = get_pool();
-    //
-    //     let mut vf = VirtualFile {
-    //         size: 0,
-    //         blocks: vec![],
-    //         block_size: 4096,
-    //     };
-    //
-    //     let buffer = random_data(199990);
-    //     let result = vf.write(&pool_map, 0, &buffer);
-    //     assert!(result.is_ok());
-    //     assert_eq!(result.unwrap(), 199990);
-    //
-    //     let result = vf.save_to_disk();
-    //     assert!(result.is_ok());
-    //
-    //     // read it back
-    //     let metadata_file = PathBuf::from(&base_dir).join("topology.shmr-v0");
-    //     let file = std::fs::File::open(&metadata_file).unwrap();
-    //     let mut reader = std::io::BufReader::new(file);
-    //     let mut buf = vec![];
-    //     reader.read_to_end(&mut buf).unwrap();
-    //
-    //     let new_vf = rkyv::from_bytes::<VirtualFile>(&buf).unwrap();
-    //     assert_eq!(vf, new_vf);
-    //
-    //     // initialize a new VirtualFile from disk
-    //     let nvf = VirtualFile::open(&base_dir);
-    //     assert!(nvf.is_ok());
-    //     let nvf = nvf.unwrap();
-    //     let mut buf1 = vec![0];
-    //     let mut buf2 = vec![0];
-    //
-    //     let _ = nvf.read(&pool_map, 0, &mut buf1);
-    //     let _ = vf.read(&pool_map, 0, &mut buf2);
-    //
-    //     assert_eq!(buf1, buf2);
-    // }
 }

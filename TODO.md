@@ -9,19 +9,19 @@ Goal. Full FUSE implementation that only uses the workspace/blocks directory to 
     - [X] Create
     - [X] Write
     - [X] Read
-- [ ] Fully Initialize Filesystem on first run, if no superblock is found
-- [ ] Take the fuse `simple.rs` example and modify it to use the VirtualFile and FsDB structs
-- [ ] File I/O works
+- [X] Fully Initialize Filesystem on first run, if no superblock is found
+- [X] Take the fuse `simple.rs` example and modify it to use the VirtualFile and FsDB structs
+- [X] File I/O works
   - [ ] Directories
-    - [ ] Create
-    - [ ] Read
+    - [X] Create
+    - [X] Read
     - [ ] Write
     - [ ] Delete
     - [ ] Rename
-  - [ ] Files
-    - [ ] Create
-    - [ ] Read
-    - [ ] Write
+  - [X] Files
+    - [X] Create
+    - [X] Read
+    - [X] Write
     - [ ] Delete
     - [ ] Rename
     - [ ] Truncate
@@ -31,11 +31,13 @@ Goal. Full FUSE implementation that only uses the workspace/blocks directory to 
     - [ ] Delete
     - [ ] Rename
 
+- [ ] Rebuild decode utility
+- Test moving file from a Single file to Erasure Format
 
 ## 0.0.2 
 Goal. Ability to relocate blocks from the Workspace to the Archive drives, where blocks for a file can exist in both places.
 
-- [ ] Read/Write I/O Operations
+- [ ] 
 - [ ] Implement Offline Program to move a file from the Workspace to the Archive Disks
   -  `shmr_shift --config config.yaml INODE`. This will move the file from the workspace to the archive disks while erasure coding the file.
   - [ ] Create command skeleton
