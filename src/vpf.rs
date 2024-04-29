@@ -5,6 +5,7 @@ use rkyv::{Archive, Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
+// use rkyv::with::Skip;
 
 /// VirtualPathBuf is like PathBuf, but the location of the pool is not stored in the path itself.
 /// Instead, it is provided as a parameter during operations.
@@ -16,11 +17,23 @@ pub struct VirtualPathBuf {
     pub pool: String,
     pub bucket: String,
     pub filename: String,
+    // #[with(Skip)]
+    // resolved_path: Option<(PathBuf, PathBuf)>
 }
 impl VirtualPathBuf {
+    // pub fn resolve(&self, map: &PoolMap) -> Self {
+    //     let mut new = self.clone();
+    //     new.resolved_path = Some(self.get_path(map).unwrap());
+    //     new
+    // }
     /// Return the (Filename, Directory) for the file.
     /// It's inverted to avoid needing to create a copy of the directory name before joining the filename
     fn get_path(&self, map: &PoolMap) -> anyhow::Result<(PathBuf, PathBuf)> {
+        // // TODO This is fucking dumb. Fix
+        // if self.resolved_path.is_some() {
+        //     return Ok(self.resolved_path.clone().unwrap());
+        // }
+
         let pool_map = map
             .0
             .get(&self.pool)
@@ -103,7 +116,7 @@ impl VirtualPathBuf {
             .write(true)
             // .truncate(true)
             .open(&full_path.0)
-            .context(format!("opening {:?}", &full_path.0))?;
+            .context("unable to open file")?;
 
         file.seek(std::io::SeekFrom::Start(offset as u64))?;
         let written = file.write(buf)?;

@@ -48,7 +48,7 @@ fn main() {
 
   // let parts = args.topology.split(",").collect::<Vec<String>>();
 
-  let fs_db = FsDB::open(&config.metadata_dir).unwrap();
+  let fs_db = FsDB::open(config.metadata_dir).unwrap();
 
   let pool_map = (config.pools.clone(), config.write_pool.clone());
   let mut inode_descriptor = fs_db.read_descriptor(args.inode).unwrap();

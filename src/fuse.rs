@@ -257,7 +257,7 @@ impl Shmr {
         };
 
         let child_inode = Inode {
-            ino: self.fs_db.generate_id(),
+            ino: self.fs_db.generate_id().unwrap(),
             size: 0,
             blocks: 0,
             atime: time_now(),
@@ -330,12 +330,8 @@ impl Shmr {
 impl Filesystem for Shmr {
     fn init(&mut self, _req: &Request<'_>, _config: &mut KernelConfig) -> Result<(), c_int> {
         // perform a re-index of the filesystem on init
-        self.fs_db.index().map_err(|e| {
-            error!("Unable to re-index FsDB. {:?}", e);
-            libc::EIO
-        })?;
 
-        if !self.fs_db.check_inode(FUSE_ROOT_ID) {
+        if !self.fs_db.check_inode(FUSE_ROOT_ID).unwrap() {
             info!("inode 0 does not exist, creating root node");
             let inode = Inode {
                 ino: FUSE_ROOT_ID,

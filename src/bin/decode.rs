@@ -34,7 +34,7 @@ fn main() {
 
 fn print_inode(buffer: &[u8])  {
     unsafe {
-        let archived = rkyv::archived_root::<Inode>(&buffer);
+        let archived = rkyv::archived_root::<Inode>(buffer);
         let result: Inode = archived.deserialize(&mut rkyv::Infallible).unwrap();
         println!("{:#?}", result);
     }
@@ -43,7 +43,7 @@ fn print_inode(buffer: &[u8])  {
 
 fn print_inode_descriptor(buffer: &[u8])  {
     unsafe {
-        let archived = rkyv::archived_root::<InodeDescriptor>(&buffer);
+        let archived = rkyv::archived_root::<InodeDescriptor>(buffer);
         let result: InodeDescriptor = archived.deserialize(&mut rkyv::Infallible).unwrap();
 
         println!("{:#?}", result);

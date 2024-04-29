@@ -55,7 +55,7 @@ fn main() {
     let pool_map = (config.pools.clone(), config.write_pool.clone());
     let fs = Shmr {
         pool_map,
-        fs_db: FsDB::open(&config.metadata_dir).unwrap(),
+        fs_db: FsDB::open(config.metadata_dir).unwrap(),
     };
     let result = fuser::mount2(fs, mount, &options);
     if let Err(e) = result {

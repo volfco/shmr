@@ -2,7 +2,7 @@
 // shmr_fstree --config CONFIG --inode INODE
 // inode of 1 is assumed if not provided
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use shmr::fsdb::FsDB;
 use shmr::fuse::InodeDescriptor;
 
@@ -40,7 +40,7 @@ fn enter_dir(fs_db: &FsDB, ino: u64, depth: usize) {
 
 fn main() {
   let root_inode = 1;
-  let fs_db = FsDB::open(&Path::new("./metadata")).unwrap();
+  let fs_db = FsDB::open(PathBuf::from("./metadata")).unwrap();
 
   println!();
   println!();
