@@ -29,7 +29,7 @@ pub struct VirtualFile {
     chunk_map: Vec<(usize, usize)>,
 
     /// List of StorageBlocks, in order, that make up the file
-    blocks: Vec<StorageBlock>
+    pub blocks: Vec<StorageBlock>
 }
 impl Default for VirtualFile {
     fn default() -> Self {
@@ -86,7 +86,7 @@ impl VirtualFile {
         let mut written = 0;
         for chunk_idx in (pos / self.chunk_size)..=((pos + bf) / self.chunk_size) {
             // allocate a new block if we're out of space to write the chunk
-            if self.chunk_map.is_empty() || self.chunk_map.len() < chunk_idx {
+            if self.chunk_map.is_empty() || self.chunk_map.len() <= chunk_idx {
                 self.allocate_block(pool)?;
             }
             let (block_idx, block_pos) = self.chunk_map.get(chunk_idx).unwrap_or_else(|| panic!("chunk_idx: {}. chunk_map len: {}", chunk_idx, self.chunk_map.len()) );

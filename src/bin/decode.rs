@@ -1,10 +1,9 @@
 // Write a program that reads in a file that contains a rkyv struct and prints the contents to the console. The program should accept an argument specifying the type of Struct that is being read in. The two types of structs that need to be supported are Inode and InodeDescriptor
 use std::env;
-use std::fmt::Debug;
 use std::fs::File;
 use std::io::Read;
 use std::process;
-use rkyv::{Archive, Archived, CheckBytes, Deserialize, Infallible, ser::{serializers::AllocSerializer, Serializer}};
+use rkyv::Deserialize;
 use shmr::fuse::{Inode, InodeDescriptor};
 
 fn main() {

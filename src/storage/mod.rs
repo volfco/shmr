@@ -100,6 +100,18 @@ impl StorageBlock {
         }
     }
 
+    pub fn is_single(&self) -> bool {
+        matches!(self, StorageBlock::Single(_, _))
+    }
+
+    pub fn is_mirror(&self) -> bool {
+        matches!(self, StorageBlock::Mirror(_, _))
+    }
+
+    pub fn is_ec(&self) -> bool {
+        matches!(self, StorageBlock::ReedSolomon { .. })
+    }
+
     /// Create the storage block, creating the necessary directories and files
     pub fn create(&self, map: &PoolMap) -> Result<()> {
         match self {
@@ -122,7 +134,7 @@ impl StorageBlock {
     /// Read the contents of the StorageBlock into the given buffer starting at the given offset
     pub fn read(&self, map: &PoolMap, offset: usize, buf: &mut [u8]) -> Result<usize> {
         if buf.is_empty() {
-            warn!("empty buffer passed to read function");
+            // warn!("empty buffer passed to read function");
             return Ok(0);
         }
         match self {
@@ -164,7 +176,7 @@ impl StorageBlock {
     /// Write the contents of the buffer to the StorageBlock at the given offset
     pub fn write(&self, map: &PoolMap, offset: usize, buf: &[u8]) -> Result<usize> {
         if buf.is_empty() {
-            warn!("empty buffer passed to read function");
+            // warn!("empty buffer passed to read function");
             return Ok(0);
         }
         debug!("writing {} bytes at offset {}", buf.len(), offset);
