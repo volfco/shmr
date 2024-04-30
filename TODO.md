@@ -15,7 +15,6 @@ Goal. Full FUSE implementation that only uses the workspace/blocks directory to 
   - [ ] Directories
     - [X] Create
     - [X] Read
-    - [ ] Write
     - [ ] Delete
     - [ ] Rename
   - [X] Files
@@ -32,7 +31,7 @@ Goal. Full FUSE implementation that only uses the workspace/blocks directory to 
     - [ ] Rename
 
 - [ ] Rebuild decode utility
-- Test moving file from a Single file to Erasure Format
+- [X] Test moving file from a Single file to Erasure Format
 
 ## 0.0.2 
 Goal. Ability to relocate blocks from the Workspace to the Archive drives, where blocks for a file can exist in both places.

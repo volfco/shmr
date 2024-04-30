@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::os::unix::prelude::OsStrExt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use redb::{TypeName, Value};
 
 const MAX_NAME_LENGTH: u32 = 255;
 
@@ -97,6 +98,39 @@ pub struct Inode {
 
     pub xattrs: BTreeMap<Vec<u8>, Vec<u8>>,
 }
+impl Value for Inode {
+    type SelfType<'a> = Inode where Self: 'a;
+    type AsBytes<'a> = Vec<u8> where Self: 'a ;
+
+    fn fixed_width() -> Option<usize> {
+        None
+    }
+
+    fn from_bytes<'a>(data: &'a [u8]) -> Self where
+      Self: 'a, {
+        println!("bytes: {:?}", &data);
+        // thread 'main' panicked at src/fuse.rs:112:64:
+        // called `Result::unwrap()` on an `Err` value: ContextError(ArchiveError(Underaligned { expected_align: 8, actual_align: 4 }))
+        let archived = rkyv::check_archived_root::<Self>(data).unwrap();
+        let result: Self = match archived.deserialize(&mut rkyv::Infallible) {
+            Ok(inner) => inner,
+            Err(e) => {
+                panic!("unable to load object")
+            }
+        };
+
+        result
+    }
+
+    fn as_bytes<'a, 'b: 'a>(value: &Self) -> Vec<u8> {
+        let pos = rkyv::to_bytes::<_, 256>(value).unwrap();
+        pos.to_vec()
+    }
+
+    fn type_name() -> TypeName {
+        TypeName::new("Inode")
+    }
+}
 impl Inode {
     pub fn check_access(&self, uid: u32, gid: u32, mut access_mask: i32) -> bool {
         // F_OK tests for existence of file
@@ -157,6 +191,36 @@ pub enum InodeDescriptor {
     /// InodeDescriptor for a directory, where the BTreeMap is (filename -> inode)
     Directory(BTreeMap<Vec<u8>, u64>),
     Symlink,
+}
+impl Value for InodeDescriptor {
+    type SelfType<'a>  = InodeDescriptor where Self: 'a;
+    type AsBytes<'a> = Vec<u8> where Self: 'a   ;
+
+    fn fixed_width() -> Option<usize> {
+        None
+    }
+
+    fn from_bytes<'a>(data: &'a [u8]) -> Self where
+      Self: 'a, {
+        let archived = rkyv::check_archived_root::<Self>(data).unwrap();
+        let result: Self = match archived.deserialize(&mut rkyv::Infallible) {
+            Ok(inner) => inner,
+            Err(e) => {
+                panic!("unable to load object")
+            }
+        };
+
+        result
+    }
+
+    fn as_bytes<'a, 'b: 'a>(value: &Self) -> Vec<u8> {
+        let pos = rkyv::to_bytes::<_, 256>(value).unwrap();
+        pos.to_vec()
+    }
+
+    fn type_name() -> TypeName {
+        TypeName::new("Inode")
+    }
 }
 
 pub struct Shmr {
@@ -330,7 +394,7 @@ impl Shmr {
 impl Filesystem for Shmr {
     fn init(&mut self, _req: &Request<'_>, _config: &mut KernelConfig) -> Result<(), c_int> {
         // perform a re-index of the filesystem on init
-
+        self.fs_db.check_init().unwrap();
         if !self.fs_db.check_inode(FUSE_ROOT_ID).unwrap() {
             info!("inode 0 does not exist, creating root node");
             let inode = Inode {

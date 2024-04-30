@@ -1,95 +1,98 @@
 use crate::fuse::{Inode, InodeDescriptor};
-use anyhow::{bail, Context, Result};
-use rkyv::Deserialize;
+use anyhow::{bail, Result};
 use std::path::PathBuf;
+use rand::Rng;
+use redb::{Database, ReadableTableMetadata, TableDefinition};
+
+const INO_TABLE: TableDefinition<u64, Inode> = TableDefinition::new("inode_data");
+const DCT_TABLE: TableDefinition<u64, InodeDescriptor> = TableDefinition::new("descriptor_data");
+
 
 pub struct FsDB {
-    ino_db: sled::Db,
-    // ino_cache: ()
-    dct_db: sled::Db
-    // dct_cache: ()
-    // TODO Eventually we will want an object cache so we can skip some serialization action
+    db: Database
 }
 impl FsDB {
     pub fn open(base_dir: PathBuf) -> Result<Self> {
-        let ino_path = base_dir.join("superblock");
-        let dct_path = base_dir.join("topology");
-        if !ino_path.exists() {
-            std::fs::create_dir_all(&ino_path)?;
-        }
-        if !dct_path.exists() {
-            std::fs::create_dir_all(&dct_path)?;
-        }
-
-        let ino_db = sled::open(ino_path).context("unable to open 'superblock' directory")?;
-        let dct_db = sled::open(dct_path).context("unable to open 'topology' directory")?;
-
+        let db_path = base_dir.join("shmr.db");
         Ok(Self {
-            ino_db, dct_db
+            db: if !db_path.exists() {
+                Database::create(&db_path)?
+            } else {
+                Database::open(&db_path)?
+            }
         })
     }
+
+    pub fn check_init(&self) -> Result<()> {
+        let txn = self.db.begin_write()?;
+        {
+            let ino_table = txn.open_table(INO_TABLE)?;
+            let _ = ino_table.len();
+        }
+        txn.commit()?;
+        Ok(())
+    }
+
     pub fn generate_id(&self) -> Result<u64> {
-        Ok(self.ino_db.generate_id()?)
+        let mut rng = rand::thread_rng();
+        loop {
+            let ino: u64 = rng.gen();
+            let read_txn = self.db.begin_read()?;
+            let table = read_txn.open_table(INO_TABLE)?;
+            if table.get(&ino)?.is_none() {
+                return Ok(ino);
+            }
+        }
     }
 
     pub fn check_inode(&self, id: u64) -> Result<bool> {
-        Ok(self.ino_db.contains_key(id.to_le_bytes())?)
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(INO_TABLE)?;
+        Ok(table.get(&id)?.is_some())
     }
 
     pub fn check_descriptor(&self, id: u64) -> Result<bool> {
-        Ok(self.dct_db.contains_key(id.to_le_bytes())?)
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(DCT_TABLE)?;
+        Ok(table.get(&id)?.is_some())
     }
 
     pub fn read_inode(&self, id: u64) -> Result<Inode> {
-        let key = id.to_le_bytes();
-        let archive = match self.ino_db.get(key)? {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(INO_TABLE)?;
+
+        match table.get(&id)? {
             None => { bail!("inode does not exist") }
-            Some(inode) => inode
-        };
-
-        let archived = rkyv::check_archived_root::<Inode>(&archive).unwrap();
-        let result: Inode = match archived.deserialize(&mut rkyv::Infallible) {
-            Ok(inode) => inode,
-            Err(e) => {
-                // this should never happen, but you can never say never
-                bail!("Failed to deserialize Inode: {:?}", e);
-            }
-        };
-
-        Ok(result)
+            Some(inode) => { Ok(inode.value()) }
+        }
     }
     pub fn read_descriptor(&self, id: u64) -> Result<InodeDescriptor> {
-        let key = id.to_le_bytes();
-        let archive = match self.dct_db.get(key)? {
-            None => { bail!("inode does not exist") }
-            Some(inode) => inode
-        };
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(DCT_TABLE)?;
 
-        let archived = rkyv::check_archived_root::<InodeDescriptor>(&archive).unwrap();
-        let result: InodeDescriptor = match archived.deserialize(&mut rkyv::Infallible) {
-            Ok(inode_descriptor) => inode_descriptor,
-            Err(e) => {
-                // this should never happen, but you can never say never
-                bail!("Failed to deserialize InodeDescriptor: {:?}", e);
-            }
-        };
-
-        Ok(result)
+        match table.get(&id)? {
+            None => { bail!("InodeDescriptor does not exist") }
+            Some(descriptor ) => { Ok(descriptor.value()) }
+        }
     }
 
     pub fn write_inode(&self, id: u64, descriptor: &Inode) -> Result<()> {
-        let key = id.to_le_bytes();
-
-        let pos = rkyv::to_bytes::<_, 256>(descriptor)?;
-        self.ino_db.insert(key, &*pos)?;
+        let txn = self.db.begin_write()?;
+        {
+            let mut table = txn.open_table(INO_TABLE)?;
+            let _ = table.insert(&id, descriptor)?;
+        }
+        txn.commit()?;
         Ok(())
     }
 
     pub fn write_descriptor(&self, id: u64, descriptor: &InodeDescriptor) -> Result<()> {
-        let key = id.to_le_bytes();
-
-        let pos = rkyv::to_bytes::<_, 256>(descriptor)?;
-        self.dct_db.insert(key, &*pos)?;
+        let txn = self.db.begin_write()?;
+        {
+            let mut table = txn.open_table(DCT_TABLE)?;
+            let _ = table.insert(&id, descriptor)?;
+        }
+        txn.commit()?;
         Ok(())
     }
 }
