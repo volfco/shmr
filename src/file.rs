@@ -5,7 +5,7 @@ use std::cmp;
 use crate::storage::{PoolMap, StorageBlock};
 use anyhow::{bail, Result};
 use log::trace;
-use rkyv::{Archive, Deserialize, Serialize};
+use bincode::{Decode, Encode};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -20,8 +20,7 @@ pub trait StoragePoolMap {
     fn new_write(&self) -> Result<HashMap<String, PathBuf>>;
 }
 
-#[derive(Debug, Archive, Serialize, Deserialize, Clone, PartialEq)]
-#[archive(compare(PartialEq), check_bytes)]
+#[derive(Encode, Decode, PartialEq, Debug, Clone)]
 pub struct VirtualFile {
     pub size: usize,
     pub chunk_size: usize,

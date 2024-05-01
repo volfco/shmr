@@ -2,7 +2,7 @@
 // shmr_fstree --config CONFIG --inode INODE
 // inode of 1 is assumed if not provided
 
-use std::path::{PathBuf};
+use std::path::PathBuf;
 use shmr::fsdb::FsDB;
 use shmr::fuse::InodeDescriptor;
 
@@ -44,6 +44,6 @@ fn main() {
 
   println!();
   println!();
-  enter_dir(&fs_db, 1, 1);
+  enter_dir(&fs_db, root_inode, 1);
 
 }

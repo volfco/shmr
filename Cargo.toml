@@ -26,5 +26,5 @@ clap = { version = "4.5.3", features = ["derive"]}
 rand = "0.8"
 
 sled = "0.34"
-rkyv = { version = "0.7", features = ["validation"]}
+bincode = "2.0.0-rc.3"
 redb = "2.1"

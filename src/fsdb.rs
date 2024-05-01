@@ -97,14 +97,14 @@ impl FsDB {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use crate::fsdb::FsDB;
-//     use std::path::Path;
-//
-//     #[test]
-//     fn test_inode_index() {
-//         let db = FsDB::open(Path::new("/tmp/shmr")).unwrap();
-//         assert_eq!(db.known_inodes.len(), 0);
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use crate::fsdb::FsDB;
+    use std::path::{PathBuf};
+
+    #[bench]
+    fn bench_generate_inode_ids(b: &mut Bencher) {
+        let base_dir = PathBuf::from("/tmp");
+        let fs_db = FsDB::open(base_dir).unwrap();
+    }
+}

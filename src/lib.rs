@@ -1,4 +1,3 @@
-#![feature(trivial_bounds)]
 use rand::Rng;
 pub mod file;
 pub mod fsdb;

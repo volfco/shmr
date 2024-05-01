@@ -1,7 +1,7 @@
 use crate::storage::PoolMap;
 use anyhow::Context;
 use log::{debug, error, trace};
-use rkyv::{Archive, Deserialize, Serialize};
+use bincode::{Decode, Encode};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
@@ -11,8 +11,7 @@ use std::path::PathBuf;
 /// Instead, it is provided as a parameter during operations.
 ///
 /// There is no need for a constructor here because this has no state. I guess? idk
-#[derive(Debug, Archive, Serialize, Deserialize, Clone, PartialEq)]
-#[archive(compare(PartialEq), check_bytes)]
+#[derive(Encode, Decode, PartialEq, Debug, Clone)]
 pub struct VirtualPathBuf {
     pub pool: String,
     pub bucket: String,

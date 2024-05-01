@@ -4,7 +4,7 @@ use crate::storage::PoolMap;
 use fuser::{FileAttr, FileType, Filesystem, KernelConfig, ReplyAttr, ReplyDirectory, ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow, FUSE_ROOT_ID, ReplyData};
 use libc::c_int;
 use log::{debug, error, info, trace, warn};
-use rkyv::{Archive, Deserialize, Serialize};
+use bincode::{config, Decode, Encode};
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::os::unix::prelude::OsStrExt;
@@ -30,8 +30,7 @@ fn system_time_from_time(secs: i64, nsecs: u32) -> SystemTime {
     }
 }
 
-#[derive(Debug, Archive, Serialize, Deserialize, Clone, PartialEq)]
-#[archive(compare(PartialEq), check_bytes)]
+#[derive(Encode, Decode, PartialEq, Debug, Clone)]
 pub enum IFileType {
     /// Named pipe (S_IFIFO)
     NamedPipe,
@@ -62,8 +61,7 @@ impl From<IFileType> for fuser::FileType {
     }
 }
 
-#[derive(Debug, Archive, Serialize, Deserialize, Clone, PartialEq)]
-#[archive(compare(PartialEq), check_bytes)]
+#[derive(Encode, Decode, PartialEq, Debug, Clone)]
 pub struct Inode {
     /// Inode number
     pub ino: u64,
@@ -108,25 +106,18 @@ impl Value for Inode {
 
     fn from_bytes<'a>(data: &'a [u8]) -> Self where
       Self: 'a, {
-        println!("bytes: {:?}", &data);
-        // thread 'main' panicked at src/fuse.rs:112:64:
-        // called `Result::unwrap()` on an `Err` value: ContextError(ArchiveError(Underaligned { expected_align: 8, actual_align: 4 }))
-        let archived = rkyv::check_archived_root::<Self>(data).unwrap();
-        let result: Self = match archived.deserialize(&mut rkyv::Infallible) {
-            Ok(inner) => inner,
-            Err(e) => {
-                panic!("unable to load object")
-            }
-        };
+        let config = config::standard();
+        
+        let (result, _len) = bincode::decode_from_slice(data, config).unwrap();
 
         result
     }
 
     fn as_bytes<'a, 'b: 'a>(value: &Self) -> Vec<u8> {
-        let pos = rkyv::to_bytes::<_, 256>(value).unwrap();
-        pos.to_vec()
+        let config = config::standard();
+        bincode::encode_to_vec(value, config).unwrap()
     }
-
+    
     fn type_name() -> TypeName {
         TypeName::new("Inode")
     }
@@ -184,8 +175,7 @@ impl From<Inode> for FileAttr {
     }
 }
 
-#[derive(Debug, Archive, Serialize, Deserialize, Clone, PartialEq)]
-#[archive(compare(PartialEq), check_bytes)]
+#[derive(Encode, Decode, PartialEq, Debug, Clone)]
 pub enum InodeDescriptor {
     File(VirtualFile),
     /// InodeDescriptor for a directory, where the BTreeMap is (filename -> inode)
@@ -202,20 +192,16 @@ impl Value for InodeDescriptor {
 
     fn from_bytes<'a>(data: &'a [u8]) -> Self where
       Self: 'a, {
-        let archived = rkyv::check_archived_root::<Self>(data).unwrap();
-        let result: Self = match archived.deserialize(&mut rkyv::Infallible) {
-            Ok(inner) => inner,
-            Err(e) => {
-                panic!("unable to load object")
-            }
-        };
+        let config = config::standard();
+        
+        let (result, _len) = bincode::decode_from_slice(data, config).unwrap();
 
         result
     }
 
     fn as_bytes<'a, 'b: 'a>(value: &Self) -> Vec<u8> {
-        let pos = rkyv::to_bytes::<_, 256>(value).unwrap();
-        pos.to_vec()
+        let config = config::standard();
+        bincode::encode_to_vec(value, config).unwrap()
     }
 
     fn type_name() -> TypeName {

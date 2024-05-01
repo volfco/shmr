@@ -5,7 +5,7 @@ use anyhow::{bail, Result};
 use log::{debug, trace, warn};
 use rand::Rng;
 use reed_solomon_erasure::galois_8::ReedSolomon;
-use rkyv::{Archive, Deserialize, Serialize};
+use bincode::{Decode, Encode};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -25,8 +25,7 @@ pub type PoolMap = (HashMap<String, HashMap<String, PathBuf>>, String);
 /// For ReedSolomon types, the block size is fixed on creation.
 ///
 /// TODO Improve Filename Generation
-#[derive(Debug, Archive, Serialize, Deserialize, Clone, PartialEq)]
-#[archive(compare(PartialEq), check_bytes)]
+#[derive(Encode, Decode, PartialEq, Debug, Clone)]
 pub enum StorageBlock {
     /// Single Backing File
     Single(usize, VirtualPathBuf),
