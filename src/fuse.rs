@@ -194,40 +194,40 @@ impl Shmr {
             return Err(libc::ENOSYS);
         }
 
-        // check if we can write to this directory
-        let parent_inode = match self.inode_db.get(&parent) {
-            Some(inode) => inode,
-            None => {
-                return Err(libc::ENOENT);
+        let gid = {
+            // check if we can write to this directory
+            let parent_inode = match self.inode_db.get(&parent) {
+                Some(inode) => inode,
+                None => {
+                    return Err(libc::ENOENT);
+                }
+            };
+
+            if !parent_inode.check_access(req.uid(), req.gid(), libc::W_OK) {
+                return Err(libc::EACCES);
             }
-        };
 
-        if !parent_inode.check_access(req.uid(), req.gid(), libc::W_OK) {
-            return Err(libc::EACCES);
-        }
-
-        if !matches!(parent_inode.kind, IFileType::Directory) {
-            warn!("attempted to create file under non-directory inode");
-            return Err(libc::ENOTDIR);
-        }
-
-        let descriptor = self.descriptor_db.get(&parent).unwrap();
-        if let InodeDescriptor::Directory(contents) = &*descriptor {
-            if contents.contains_key(name.as_bytes()) {
-                return Err(libc::EEXIST);
+            {
+                let descriptor = self.descriptor_db.get(&parent).unwrap();
+                if let InodeDescriptor::Directory(contents) = &*descriptor {
+                    if contents.contains_key(name.as_bytes()) {
+                        return Err(libc::EEXIST);
+                    }
+                } else {
+                    warn!("attempted to create file under non-directory inode");
+                    return Err(libc::ENOTDIR);
+                }
             }
-        } else {
-            panic!("parent inode is not a directory")
-        }
 
-        // before updating the parent inode, create the child inode first.
-        // so if this fails, all we have is an orphaned inode and not a modified directory without the
-        // underlying inode
-        debug!("Creating child inode for parent {}", parent);
-        let gid = if parent_inode.perm & libc::S_ISGID as u16 != 0 {
-            parent_inode.gid
-        } else {
-            req.gid()
+            // before updating the parent inode, create the child inode first.
+            // so if this fails, all we have is an orphaned inode and not a modified directory without the
+            // underlying inode
+            debug!("Creating child inode for parent {}", parent);
+            if parent_inode.perm & libc::S_ISGID as u16 != 0 {
+                parent_inode.gid
+            } else {
+                req.gid()
+            }
         };
 
         let ino = self.inode_db.gen_id().unwrap();
@@ -341,8 +341,8 @@ impl Filesystem for Shmr {
         if let InodeDescriptor::Directory(contents) = &*descriptor {
             match contents.get(name.as_bytes()) {
                 Some(entry_inode) => {
-                    let inode: FileAttr = self.inode_db.get(entry_inode).unwrap().to_fileattr();
-                    reply.entry(&Duration::new(0, 0), &inode, 0)
+                    let inode = self.inode_db.get(entry_inode).unwrap();
+                    reply.entry(&Duration::new(0, 0), &inode.to_fileattr(), 0)
                 }
                 None => reply.error(libc::ENOENT),
             }
@@ -471,8 +471,8 @@ impl Filesystem for Shmr {
             ino
         );
 
-        let fa: FileAttr = inode.to_fileattr();
-        reply.attr(&Duration::new(0, 0), &fa);
+        reply.attr(&Duration::new(0, 0), &inode.to_fileattr());
+        drop(inode);
     }
 
     /// Create a file node
@@ -489,8 +489,8 @@ impl Filesystem for Shmr {
     ) {
         match self.create(_req, parent, name, mode, umask, rdev) {
             Ok(inode) => {
-                let fa: FileAttr = (self.inode_db.get(&inode).unwrap().clone()).to_fileattr();
-                reply.entry(&Duration::new(0, 0), &fa, 0);
+                let inode = self.inode_db.get(&inode).unwrap().clone();
+                reply.entry(&Duration::new(0, 0), &inode.to_fileattr(), 0);
             }
             Err(e) => {
                 reply.error(e);
@@ -509,8 +509,8 @@ impl Filesystem for Shmr {
     ) {
         match self.create(req, parent, name, mode | libc::S_IFDIR, umask, 0) {
             Ok(inode) => {
-                let fa: FileAttr = (self.inode_db.get(&inode).unwrap().clone()).to_fileattr();
-                reply.entry(&Duration::new(0, 0), &fa, 0);
+                let inode = self.inode_db.get(&inode).unwrap().clone();
+                reply.entry(&Duration::new(0, 0), &inode.to_fileattr(), 0);
             }
             Err(e) => {
                 reply.error(e);
@@ -651,6 +651,7 @@ impl Filesystem for Shmr {
                 file_inode.atime = time_now();
 
                 reply.written(*amount as u32);
+                drop(file_inode);
             }
             Err(e) => {
                 error!("Failed to write data to file: {:?}", e);

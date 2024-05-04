@@ -4,11 +4,11 @@ use crate::vpf::VirtualPathBuf;
 use log::{debug, error, info, trace, warn};
 use rand::Rng;
 use reed_solomon_erasure::galois_8::ReedSolomon;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, RwLock};
 use std::sync::atomic::{AtomicU8, Ordering};
 use chashmap::{CHashMap, ReadGuard};
 use serde::{Deserialize, Serialize};
@@ -23,17 +23,17 @@ pub type PoolMap = HashMap<String, HashMap<String, PathBuf>>;
 /// Serves a dual purpose. One, as a way to cache file handles, and pass runtime config down to
 /// lower levels
 ///
-/// Engine might be a bad name for this
+/// Engine might be a bad name for this.
+/// TODO Rename Engine to something more appropriate
+/// TODO Implement some sort of background flush mechanism
+/// TODO Implement a LRU Cache for the handles
 pub struct Engine {
     /// Write Pool Name
     pub(crate) write_pool: String,
     /// Map of Pools
     pub(crate) pools: PoolMap,
     /// HashMap of VirtualPathBuf entries, and the associated File Handle
-    handles: CHashMap<VirtualPathBuf, (Arc<File>, PathBuf)>,
-
-    /// Every write increments this value, and once it's full, all the handles are flushed
-    shitters_full: AtomicU8,
+    handles: Arc<RwLock<BTreeMap<VirtualPathBuf, (Arc<Mutex<File>>, PathBuf)>>>,
 }
 impl Engine {
     // TODO Periodic flush, like FsDB2. <--
@@ -42,8 +42,7 @@ impl Engine {
         Engine {
             write_pool,
             pools,
-            handles: CHashMap::new(),
-            shitters_full: AtomicU8::new(0),
+            handles: Arc::new(RwLock::new(BTreeMap::new())),
         }
     }
 
@@ -55,16 +54,21 @@ impl Engine {
             .write(true)
             .open(&path)?;
 
-        self.handles.insert(vpf.clone(), (Arc::new(handle), path));
+        let mut wh = self.handles.write().unwrap();
+        if wh.contains_key(vpf) {
+            return Ok(());
+        }
+
+        wh.insert(vpf.clone(), (Arc::new(Mutex::new(handle)), path));
 
         Ok(())
     }
 
-    fn flush_all(&self) {
-        for (_vpf, handle) in self.handles.clone().into_iter() {
-            handle.0.sync_all().unwrap();
-        }
-    }
+    // fn flush_all(&self) {
+    //     for (_vpf, handle) in (self.handles.clone()).into_iter() {
+    //         handle.0.sync_all().unwrap();
+    //     }
+    // }
     pub fn create(&self, vpf: &VirtualPathBuf) -> Result<(), ShmrError> {
         let full_path = vpf.resolve(&self.pools)?;
 
@@ -82,7 +86,11 @@ impl Engine {
           .write(true)
           .open(&full_path.0)?;
 
-        file.sync_all()?;
+        // close the handle
+        drop(file);
+
+        // reopen it, caching the handle
+        self.open_handle(vpf)?;
 
         Ok(())
     }
@@ -98,39 +106,44 @@ impl Engine {
     }
 
     pub fn read(&self, vpf: &VirtualPathBuf, offset: usize, buf: &mut [u8]) -> Result<usize, ShmrError> {
-        if !self.handles.contains_key(vpf) {
-            self.open_handle(vpf)?;
+        {
+            let handles_handle = self.handles.read().unwrap();
+            if !handles_handle.contains_key(vpf) {
+                drop(handles_handle);
+                self.open_handle(vpf)?;
+            }
         }
-        let mut handle = self.handles.get_mut(vpf).unwrap();
+        let binding = self.handles.read().unwrap();
+        let entry = binding.get(vpf).unwrap();
+        let mut file_handle = entry.0.lock().unwrap();
 
-        handle.0.seek(std::io::SeekFrom::Start(offset as u64))?;
-        let read = handle.0.read(buf)?;
+        file_handle.seek(std::io::SeekFrom::Start(offset as u64))?;
+        let read = file_handle.read(buf)?;
         debug!(
-            "Read {} bytes from {:?} at offset {}",
-            read, handle.1, offset
+            "Read {} bytes to {:?} at offset {}",
+            read, entry.1, offset
         );
         Ok(read)
     }
 
     pub fn write(&self, vpf: &VirtualPathBuf, offset: usize, buf: &[u8]) -> Result<usize, ShmrError> {
-        if self.shitters_full.load(Ordering::Relaxed) == u8::MAX {
-            debug!("Flushing all handles");
-            self.flush_all();
-            self.shitters_full.store(0, Ordering::Relaxed);
+        {
+            let handles_handle = self.handles.read().unwrap();
+            if !handles_handle.contains_key(vpf) {
+                drop(handles_handle);
+                self.open_handle(vpf)?;
+            }
         }
-        if !self.handles.contains_key(vpf) {
-            self.open_handle(vpf)?;
-        }
-        let mut handle = self.handles.get_mut(vpf).unwrap();
+        let binding = self.handles.read().unwrap();
+        let entry = binding.get(vpf).unwrap();
+        let mut file_handle = entry.0.lock().unwrap();
 
-        handle.0.seek(std::io::SeekFrom::Start(offset as u64)).expect("seek failed");
-        let written = handle.0.write(buf)?;
+        file_handle.seek(std::io::SeekFrom::Start(offset as u64))?;
+        let written = file_handle.write(buf)?;
         debug!(
             "Wrote {} bytes to {:?} at offset {}",
-            written, handle.1, offset
+            written, entry.1, offset
         );
-        self.shitters_full.fetch_add(1, Ordering::Relaxed);
-
         Ok(written)
     }
 }

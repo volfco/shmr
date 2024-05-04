@@ -137,7 +137,6 @@ impl<K: Serialize + DeserializeOwned + Eq + Hash + Clone + Send + Sync + Debug +
         marker.push(ident.clone());
 
         let _ = self.entries.insert(ident, value);
-
         drop(marker);
     }
 

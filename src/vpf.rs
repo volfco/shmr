@@ -9,7 +9,7 @@ use crate::ShmrError;
 /// Instead, it is provided as a parameter during operations.
 ///
 /// There is no need for a constructor here because this has no state. I guess? idk
-#[derive(Serialize, Deserialize, PartialEq, Hash, Debug, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Hash, Ord, PartialOrd, Eq, Debug, Clone)]
 pub struct VirtualPathBuf {
     pub pool: String,
     pub bucket: String,
