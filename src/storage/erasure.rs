@@ -1,4 +1,4 @@
-use crate::storage::PoolMap;
+use crate::storage::{Engine, PoolMap};
 use crate::vpf::VirtualPathBuf;
 use log::{debug, error, trace, warn};
 use reed_solomon_erasure::galois_8::ReedSolomon;
@@ -8,11 +8,11 @@ use crate::ShmrError;
 /// Read the given sets of shards, reconstruct the data if applicable, and return the encoded data
 pub fn read(
     r: &ReedSolomon,
-    pool_map: &PoolMap,
+    engine: &Engine,
     shards: &[VirtualPathBuf],
     shard_size: usize,
 ) -> Result<Vec<u8>, ShmrError> {
-    let mut shards = read_ec_shards(pool_map, shards, &shard_size);
+    let mut shards = read_ec_shards(engine, shards, &shard_size);
 
     if shards
         .iter()
@@ -57,7 +57,7 @@ pub fn read(
 }
 
 pub fn read_ec_shards(
-    pool_map: &PoolMap,
+    engine: &Engine,
     shards: &[VirtualPathBuf],
     shard_size: &usize,
 ) -> Vec<Option<Vec<u8>>> {
@@ -65,7 +65,7 @@ pub fn read_ec_shards(
         .iter()
         .map(|path| {
             let mut buffer = vec![];
-            if let Err(e) = path.read(pool_map, 0, &mut buffer) {
+            if let Err(e) = engine.read(path, 0, &mut buffer) {
                 error!("Error opening file: {:?}", e);
                 return None;
             }
@@ -88,7 +88,7 @@ pub fn read_ec_shards(
 /// is generated automatically
 pub fn write(
     r: &ReedSolomon,
-    pool_map: &PoolMap,
+    engine: &Engine,
     shards: &[VirtualPathBuf],
     shard_size: usize,
     buf: Vec<u8>,
@@ -120,7 +120,7 @@ pub fn write(
     let mut written = 0;
 
     for (shard_idx, shard) in shards.iter().enumerate() {
-        written += shard.write(pool_map, 0, &data_shards[shard_idx])?;
+        written += engine.write(shard, 0, &data_shards[shard_idx])?;
     }
 
     Ok(written)

@@ -8,6 +8,7 @@ use log::{error, LevelFilter};
 use serde::{Deserialize, Serialize};
 use shmr::fuse::Shmr;
 use std::path::PathBuf;
+use shmr::storage::Engine;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -51,8 +52,8 @@ fn main() {
     let mount = config.mount_dir.clone();
     //
     // // check if there is already something mounted at the mount point
-    let pool_map = (config.pools.clone(), config.write_pool.clone());
-    let fs = Shmr::open(config.metadata_dir, pool_map).unwrap();
+    let engine = Engine::new(config.write_pool.clone(), config.pools.clone());
+    let fs = Shmr::open(config.metadata_dir, engine).unwrap();
     let result = fuser::mount2(fs, mount, &options);
     if let Err(e) = result {
         // Return a special error code for permission denied, which usually indicates that

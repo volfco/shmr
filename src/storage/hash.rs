@@ -50,6 +50,7 @@ fn hash_file(path: &PathBuf) -> Result<u64> {
 mod tests {
     use super::*;
     use crate::random_string;
+    use crate::storage::Engine;
     use crate::tests::get_pool;
 
     #[test]
@@ -57,7 +58,7 @@ mod tests {
         let filename1 = random_string();
         let filename2 = random_string();
 
-        let pool_map: PoolMap = get_pool();
+        let engine: Engine = Engine::new("test_pool".to_string(), get_pool());
 
         let paths = vec![
             VirtualPathBuf {
@@ -75,12 +76,13 @@ mod tests {
         let contents = random_string();
         let buf = contents.as_bytes();
 
-        paths[0].create(&pool_map).unwrap();
-        paths[0].write(&pool_map, 0, buf).unwrap();
-        paths[1].create(&pool_map).unwrap();
-        paths[1].write(&pool_map, 0, buf).unwrap();
+        engine.create(&paths[0]).unwrap();
+        engine.write(&paths[0], 0, buf).unwrap();
 
-        assert_eq!(compare(&pool_map, &paths), true);
+        engine.create(&paths[1]).unwrap();
+        engine.write(&paths[1], 0, buf).unwrap();
+
+        assert_eq!(compare(&engine.pools, &paths), true);
     }
 
     #[test]
@@ -88,7 +90,7 @@ mod tests {
         let filename1 = random_string();
         let filename2 = random_string();
 
-        let pool_map: PoolMap = get_pool();
+        let engine: Engine = Engine::new("test_pool".to_string(), get_pool());
 
         let paths = vec![
             VirtualPathBuf {
@@ -108,12 +110,12 @@ mod tests {
         let contents2 = random_string();
         let buf2 = contents2.as_bytes();
 
-        paths[0].create(&pool_map).unwrap();
-        paths[0].write(&pool_map, 0, buf1).unwrap();
+        engine.create(&paths[0]).unwrap();
+        engine.write(&paths[0], 0, buf1).unwrap();
 
-        paths[1].create(&pool_map).unwrap();
-        paths[1].write(&pool_map, 0, buf2).unwrap();
+        engine.create(&paths[1]).unwrap();
+        engine.write(&paths[1], 0, buf2).unwrap();
 
-        assert_eq!(compare(&pool_map, &paths), false);
+        assert_eq!(compare(&engine.pools, &paths), false);
     }
 }

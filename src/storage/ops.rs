@@ -3,26 +3,26 @@ use anyhow::Result;
 use log::debug;
 use crate::ShmrError;
 
-/// Replaces the given StorageBlock with one that is Erasure Encoded.
-pub fn replace_with_ec(
-    old: &StorageBlock,
-    pool: &str,
-    pool_map: &PoolMap,
-    new_topology: (u8, u8),
-) -> Result<StorageBlock, ShmrError> {
-    let mut contents = vec![];
-    let m = old.read(pool_map, 0, &mut contents)?;
-
-    assert!(m > 0, "read 0 bytes from storageblock");
-
-    let new_block = StorageBlock::init_ec(pool, pool_map, new_topology, m);
-    new_block.create(pool_map)?;
-
-    debug!("successfully created new storageblock");
-    new_block.write(pool_map, 0, &contents)?;
-
-    Ok(new_block)
-}
+// /// Replaces the given StorageBlock with one that is Erasure Encoded.
+// pub fn replace_with_ec(
+//     old: &StorageBlock,
+//     pool: &str,
+//     pool_map: &PoolMap,
+//     new_topology: (u8, u8),
+// ) -> Result<StorageBlock, ShmrError> {
+//     let mut contents = vec![];
+//     let m = old.read(pool_map, 0, &mut contents)?;
+//
+//     assert!(m > 0, "read 0 bytes from storageblock");
+//
+//     let new_block = StorageBlock::init_ec(pool, pool_map, new_topology, m);
+//     new_block.create(pool_map)?;
+//
+//     debug!("successfully created new storageblock");
+//     new_block.write(pool_map, 0, &contents)?;
+//
+//     Ok(new_block)
+// }
 //
 // #[cfg(test)]
 // mod tests {

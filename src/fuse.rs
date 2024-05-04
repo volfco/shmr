@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::file::{DEFAULT_CHUNK_SIZE, VirtualFile};
 use crate::fsdb::FsDB2;
-use crate::storage::PoolMap;
+use crate::storage::{Engine, PoolMap};
 use fuser::{FileAttr, FileType, Filesystem, KernelConfig, ReplyAttr, ReplyDirectory, ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow, FUSE_ROOT_ID, ReplyData};
 use libc::c_int;
 use log::{debug, error, info, trace, warn};
@@ -159,15 +159,15 @@ pub enum InodeDescriptor {
     Symlink,
 }
 pub struct Shmr {
-    pub pool_map: PoolMap,
+    engine: Engine,
     inode_db: FsDB2<u64, Inode>,
     descriptor_db: FsDB2<u64, InodeDescriptor>
 }
 impl Shmr {
-    pub fn open(path: PathBuf, pool_map: PoolMap) -> Result<Self, ShmrError> {
+    pub fn open(path: PathBuf, engine: Engine) -> Result<Self, ShmrError> {
         let db_path = path.join("shmr");
         Ok(Self {
-            pool_map,
+            engine,
             inode_db: FsDB2::open(db_path.join("inode_db")).unwrap(),
             descriptor_db: FsDB2::open(db_path.join("descriptor_db")).unwrap()
         })
@@ -633,7 +633,7 @@ impl Filesystem for Shmr {
         let mut buffer = vec![0; vf.chunk_size];
 
         // TODO this might not work because offset might be negative?
-        match vf.read(&self.pool_map, offset as usize, &mut buffer) {
+        match vf.read(&self.engine, offset as usize, &mut buffer) {
             Ok(_) => reply.data(&buffer),
             Err(e) => {
                 error!("Failed to read data to file: {:?}", e);
@@ -701,7 +701,7 @@ impl Filesystem for Shmr {
             }
         };
 
-        match &mut vf.write(&self.pool_map, offset as usize, data) {
+        match &mut vf.write(&self.engine, offset as usize, data) {
             Ok(amount) => {
                 // update the inode
                 file_inode.size = vf.size();
@@ -751,7 +751,7 @@ impl Filesystem for Shmr {
         reply.opened(0, 0);
     }
 
-    // Read directory.
+    /// Read directory.
     /// Send a buffer filled using buffer.fill(), with size not exceeding the requested size. Send
     /// an empty buffer on end of stream. fh will contain the value set by the opendir method, or
     /// will be undefined if the opendir method didn’t set any value.

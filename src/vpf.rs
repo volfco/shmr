@@ -11,7 +11,7 @@ use crate::ShmrError;
 /// Instead, it is provided as a parameter during operations.
 ///
 /// There is no need for a constructor here because this has no state. I guess? idk
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Hash, Debug, Clone)]
 pub struct VirtualPathBuf {
     pub pool: String,
     pub bucket: String,
@@ -27,14 +27,8 @@ impl VirtualPathBuf {
     // }
     /// Return the (Filename, Directory) for the file.
     /// It's inverted to avoid needing to create a copy of the directory name before joining the filename
-    fn get_path(&self, map: &PoolMap) -> Result<(PathBuf, PathBuf), ShmrError> {
-        // // TODO This is fucking dumb. Fix
-        // if self.resolved_path.is_some() {
-        //     return Ok(self.resolved_path.clone().unwrap());
-        // }
-
+    pub fn resolve(&self, map: &PoolMap) -> Result<(PathBuf, PathBuf), ShmrError> {
         let pool_map = map
-            .0
             .get(&self.pool)
             .ok_or(ShmrError::InvalidPoolId)?;
 
@@ -56,8 +50,8 @@ impl VirtualPathBuf {
     }
 
     pub fn resolve_path(&self, map: &PoolMap) -> Result<PathBuf, ShmrError> {
-        let full_path = self.get_path(map)?;
-        Ok(full_path.1.join(full_path.0))
+        let full_path = self.resolve(map)?;
+        Ok(full_path.0)
     }
 
     pub fn exists(&self, map: &PoolMap) -> bool {
@@ -70,144 +64,79 @@ impl VirtualPathBuf {
         }
     }
 
-    pub fn create(&self, map: &PoolMap) -> Result<(), ShmrError> {
-        let full_path = self.get_path(map)?;
-
-        // ensure the directory exists
-        if !full_path.1.exists() {
-            trace!("creating directory: {:?}", &full_path.1);
-            std::fs::create_dir_all(&full_path.1)?;
-        }
-
-        trace!("creating file {:?}", &full_path.0);
-
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(&full_path.0)?;
-
-        file.sync_all()?;
-
-        Ok(())
-    }
-
-    pub fn read(&self, map: &PoolMap, offset: usize, buf: &mut [u8]) -> Result<usize, ShmrError> {
-        let full_path = self.get_path(map)?;
-
-        let mut file = File::open(&full_path.0)?;
-        file.seek(std::io::SeekFrom::Start(offset as u64))?;
-        let read = file.read(buf)?;
-
-        debug!(
-            "Read {} bytes from {:?} at offset {}",
-            read, full_path.0, offset
-        );
-        Ok(read)
-    }
-
-    pub fn write(&self, map: &PoolMap, offset: usize, buf: &[u8]) -> Result<usize, ShmrError> {
-        let full_path = self.get_path(map)?;
-
-        let mut file = OpenOptions::new()
-            .write(true)
-            // .truncate(true)
-            .open(&full_path.0)?;
-
-        file.seek(std::io::SeekFrom::Start(offset as u64))?;
-        let written = file.write(buf)?;
-
-        // ensure that we sync the data to disk
-        file.sync_all()?;
-
-        debug!(
-            "Wrote {} bytes to {:?} at offset {}",
-            written, full_path.0, offset
-        );
-        Ok(written)
-    }
-
-    pub fn delete(&self, map: &PoolMap) -> Result<(), ShmrError> {
-        let full_path = self.get_path(map)?;
-
-        std::fs::remove_file(&full_path.0)?;
-
-        debug!("Deleted file path: {:?}", full_path.0);
-        Ok(())
-    }
 }
 
-
-#[cfg(test)]
-mod tests {
-    use super::VirtualPathBuf;
-    use crate::random_string;
-    use crate::tests::get_pool;
-
-    #[test]
-    fn test_virtual_path_buf_create() {
-        let pool_map = get_pool();
-
-        let path = VirtualPathBuf {
-            pool: "test_pool".to_string(),
-            bucket: "bucket1".to_string(),
-            filename: "test_file".to_string(),
-        };
-
-        let result = path.create(&pool_map);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_virtual_path_buf_write() {
-        let filename = random_string();
-        let pool_map = get_pool();
-
-        let path = VirtualPathBuf {
-            pool: "test_pool".to_string(),
-            bucket: "bucket1".to_string(),
-            filename,
-        };
-
-        // ensure the file exists before writing
-        let result = path.create(&pool_map);
-        assert!(result.is_ok());
-
-        // write to the file
-        let buffer = vec![0, 1, 2];
-        let result = path.write(&pool_map, 0, &buffer);
-        assert!(result.is_ok());
-
-        // read the data back
-        let mut read_buffer = [0; 3];
-        let result = path.read(&pool_map, 0, &mut read_buffer);
-        assert!(result.is_ok());
-        assert_eq!(read_buffer, buffer.as_slice());
-    }
-
-    #[test]
-    fn test_virtual_path_buf_delete() {
-        let filename = random_string();
-        let pool_map = get_pool();
-
-        let path = VirtualPathBuf {
-            pool: "test_pool".to_string(),
-            bucket: "bucket1".to_string(),
-            filename,
-        };
-
-        // ensure the file exists before writing
-        let result = path.create(&pool_map);
-        assert!(result.is_ok());
-
-        let result = path.delete(&pool_map);
-        assert!(result.is_ok());
-
-        // resolve the path to make sure the data is not there
-        let result = path.resolve_path(&pool_map);
-        assert!(result.is_ok());
-
-        assert_eq!(result.unwrap().exists(), false);
-    }
-
-}
+//
+// #[cfg(test)]
+// mod tests {
+//     use super::VirtualPathBuf;
+//     use crate::random_string;
+//     use crate::tests::get_pool;
+//
+//     #[test]
+//     fn test_virtual_path_buf_create() {
+//         let pool_map = get_pool();
+//
+//         let path = VirtualPathBuf {
+//             pool: "test_pool".to_string(),
+//             bucket: "bucket1".to_string(),
+//             filename: "test_file".to_string(),
+//         };
+//
+//         let result = path.create(&pool_map);
+//         assert!(result.is_ok());
+//     }
+//
+//     #[test]
+//     fn test_virtual_path_buf_write() {
+//         let filename = random_string();
+//         let pool_map = get_pool();
+//
+//         let path = VirtualPathBuf {
+//             pool: "test_pool".to_string(),
+//             bucket: "bucket1".to_string(),
+//             filename,
+//         };
+//
+//         // ensure the file exists before writing
+//         let result = path.create(&pool_map);
+//         assert!(result.is_ok());
+//
+//         // write to the file
+//         let buffer = vec![0, 1, 2];
+//         let result = path.write(&pool_map, 0, &buffer);
+//         assert!(result.is_ok());
+//
+//         // read the data back
+//         let mut read_buffer = [0; 3];
+//         let result = path.read(&pool_map, 0, &mut read_buffer);
+//         assert!(result.is_ok());
+//         assert_eq!(read_buffer, buffer.as_slice());
+//     }
+//
+//     #[test]
+//     fn test_virtual_path_buf_delete() {
+//         let filename = random_string();
+//         let pool_map = get_pool();
+//
+//         let path = VirtualPathBuf {
+//             pool: "test_pool".to_string(),
+//             bucket: "bucket1".to_string(),
+//             filename,
+//         };
+//
+//         // ensure the file exists before writing
+//         let result = path.create(&pool_map);
+//         assert!(result.is_ok());
+//
+//         let result = path.delete(&pool_map);
+//         assert!(result.is_ok());
+//
+//         // resolve the path to make sure the data is not there
+//         let result = path.resolve_path(&pool_map);
+//         assert!(result.is_ok());
+//
+//         assert_eq!(result.unwrap().exists(), false);
+//     }
+//
+// }

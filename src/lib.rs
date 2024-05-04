@@ -53,8 +53,8 @@ pub mod tests {
         let mut buckets = HashMap::new();
         buckets.insert("bucket1".to_string(), PathBuf::from("/tmp"));
 
-        let mut pool_map: PoolMap = (HashMap::new(), "test_pool".to_string());
-        pool_map.0.insert("test_pool".to_string(), buckets);
+        let mut pool_map: PoolMap = HashMap::new();
+        pool_map.insert("test_pool".to_string(), buckets);
 
         pool_map
     }
