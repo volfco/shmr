@@ -10,7 +10,7 @@ use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
-use chashmap::CHashMap;
+use chashmap::{CHashMap, ReadGuard};
 use serde::{Deserialize, Serialize};
 
 pub mod erasure;
@@ -46,27 +46,18 @@ impl Engine {
             shitters_full: AtomicU8::new(0),
         }
     }
-    fn get_handle(&self, vpf: &VirtualPathBuf) -> (Arc<File>, PathBuf) {
-        match self.handles.get(vpf) {
-            Some(h) => h.clone(),
-            None => {
-                let path = vpf.resolve_path(&self.pools).unwrap();
-                //
-                // if !path.exists() {
-                //     self.create(vpf).unwrap();
-                // }
 
-                let handle = OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .open(&path)
-                    .unwrap();
+    fn open_handle(&self, vpf: &VirtualPathBuf) -> Result<(), ShmrError> {
+        let path = vpf.resolve_path(&self.pools)?;
 
-                let h = (Arc::new(handle), path);
-                self.handles.insert(vpf.clone(), h.clone());
-                h
-            }
-        }
+        let handle = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)?;
+
+        self.handles.insert(vpf.clone(), (Arc::new(handle), path));
+
+        Ok(())
     }
 
     fn flush_all(&self) {
@@ -107,7 +98,10 @@ impl Engine {
     }
 
     pub fn read(&self, vpf: &VirtualPathBuf, offset: usize, buf: &mut [u8]) -> Result<usize, ShmrError> {
-        let mut handle = self.get_handle(&vpf);
+        if !self.handles.contains_key(vpf) {
+            self.open_handle(vpf)?;
+        }
+        let mut handle = self.handles.get_mut(vpf).unwrap();
 
         handle.0.seek(std::io::SeekFrom::Start(offset as u64))?;
         let read = handle.0.read(buf)?;
@@ -124,7 +118,10 @@ impl Engine {
             self.flush_all();
             self.shitters_full.store(0, Ordering::Relaxed);
         }
-        let mut handle = self.get_handle(&vpf);
+        if !self.handles.contains_key(vpf) {
+            self.open_handle(vpf)?;
+        }
+        let mut handle = self.handles.get_mut(vpf).unwrap();
 
         handle.0.seek(std::io::SeekFrom::Start(offset as u64)).expect("seek failed");
         let written = handle.0.write(buf)?;
