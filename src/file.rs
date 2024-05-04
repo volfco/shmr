@@ -3,11 +3,12 @@ use std::cmp;
 //       Then step through moving it from a single buffer file, to one with multiple StorageBlocks.
 //       Then do some I/O operations on it.
 use crate::storage::{PoolMap, StorageBlock};
-use anyhow::{bail, Result};
+use anyhow::{Result};
 use log::trace;
-use bincode::{Decode, Encode};
+use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use crate::ShmrError;
 
 /// Default Chunk Size. Also used as the inode block size for FUSE stuffs
 ///
@@ -20,7 +21,7 @@ pub trait StoragePoolMap {
     fn new_write(&self) -> Result<HashMap<String, PathBuf>>;
 }
 
-#[derive(Encode, Decode, PartialEq, Debug, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct VirtualFile {
     pub size: usize,
     pub chunk_size: usize,
@@ -56,7 +57,7 @@ impl VirtualFile {
     }
 
     /// Allocate a new StorageBlock then extend the chunk map
-    fn allocate_block(&mut self, pool: &PoolMap) -> Result<()> {
+    fn allocate_block(&mut self, pool: &PoolMap) -> Result<(), ShmrError> {
         // TODO Improve the logic when selecting which pool to select from
         let sb = StorageBlock::init_single(pool.1.as_str(), pool)?;
         sb.create(pool)?;
@@ -71,7 +72,7 @@ impl VirtualFile {
         Ok(())
     }
 
-    pub fn write(&mut self, pool: &PoolMap, pos: usize, buf: &[u8]) -> Result<usize> {
+    pub fn write(&mut self, pool: &PoolMap, pos: usize, buf: &[u8]) -> Result<usize, ShmrError> {
         let bf = buf.len();
         if bf == 0 {
             trace!("write request buf len == 0. nothing to do");
@@ -101,7 +102,7 @@ impl VirtualFile {
     }
 
     /// Read `size` bytes from VirtualFile, starting at the given offset, into the buffer.
-    pub fn read(&self, pool: &PoolMap, pos: usize, buf: &mut [u8]) -> Result<usize> {
+    pub fn read(&self, pool: &PoolMap, pos: usize, buf: &mut [u8]) -> Result<usize, ShmrError> {
         let bf = buf.len();
         if bf == 0 {
             trace!("write request buf len == 0. nothing to do");
@@ -109,7 +110,7 @@ impl VirtualFile {
         }
 
         if pos > self.size {
-            bail!("EOF")
+            return Err(ShmrError::EndOfFile)
         }
 
         let mut read = 0;  // amount read

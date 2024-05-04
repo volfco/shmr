@@ -6,7 +6,6 @@ use clap::Parser;
 use fuser::MountOption;
 use log::{error, LevelFilter};
 use serde::{Deserialize, Serialize};
-use shmr::fsdb::FsDB;
 use shmr::fuse::Shmr;
 use std::path::PathBuf;
 
@@ -53,10 +52,7 @@ fn main() {
     //
     // // check if there is already something mounted at the mount point
     let pool_map = (config.pools.clone(), config.write_pool.clone());
-    let fs = Shmr {
-        pool_map,
-        fs_db: FsDB::open(config.metadata_dir).unwrap(),
-    };
+    let fs = Shmr::open(config.metadata_dir, pool_map).unwrap();
     let result = fuser::mount2(fs, mount, &options);
     if let Err(e) = result {
         // Return a special error code for permission denied, which usually indicates that

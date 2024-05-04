@@ -1,17 +1,17 @@
 use crate::storage::PoolMap;
-use anyhow::Context;
 use log::{debug, error, trace};
-use bincode::{Decode, Encode};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
+use crate::ShmrError;
 // use rkyv::with::Skip;
 
 /// VirtualPathBuf is like PathBuf, but the location of the pool is not stored in the path itself.
 /// Instead, it is provided as a parameter during operations.
 ///
 /// There is no need for a constructor here because this has no state. I guess? idk
-#[derive(Encode, Decode, PartialEq, Debug, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct VirtualPathBuf {
     pub pool: String,
     pub bucket: String,
@@ -27,7 +27,7 @@ impl VirtualPathBuf {
     // }
     /// Return the (Filename, Directory) for the file.
     /// It's inverted to avoid needing to create a copy of the directory name before joining the filename
-    fn get_path(&self, map: &PoolMap) -> anyhow::Result<(PathBuf, PathBuf)> {
+    fn get_path(&self, map: &PoolMap) -> Result<(PathBuf, PathBuf), ShmrError> {
         // // TODO This is fucking dumb. Fix
         // if self.resolved_path.is_some() {
         //     return Ok(self.resolved_path.clone().unwrap());
@@ -36,11 +36,11 @@ impl VirtualPathBuf {
         let pool_map = map
             .0
             .get(&self.pool)
-            .ok_or(anyhow::anyhow!("Invalid pool id"))?;
+            .ok_or(ShmrError::InvalidPoolId)?;
 
         let mut path_buf = pool_map
             .get(&self.bucket)
-            .ok_or(anyhow::anyhow!("Invalid bucket id"))?
+            .ok_or(ShmrError::InvalidBucketId)?
             .clone();
 
         path_buf.push(&self.filename[0..2]); // first two characters of the filename
@@ -55,7 +55,7 @@ impl VirtualPathBuf {
         Ok(result)
     }
 
-    pub fn resolve_path(&self, map: &PoolMap) -> anyhow::Result<PathBuf> {
+    pub fn resolve_path(&self, map: &PoolMap) -> Result<PathBuf, ShmrError> {
         let full_path = self.get_path(map)?;
         Ok(full_path.1.join(full_path.0))
     }
@@ -70,14 +70,13 @@ impl VirtualPathBuf {
         }
     }
 
-    pub fn create(&self, map: &PoolMap) -> anyhow::Result<()> {
+    pub fn create(&self, map: &PoolMap) -> Result<(), ShmrError> {
         let full_path = self.get_path(map)?;
 
         // ensure the directory exists
         if !full_path.1.exists() {
             trace!("creating directory: {:?}", &full_path.1);
-            std::fs::create_dir_all(&full_path.1)
-                .context(format!("creating {:?}", &full_path.1))?;
+            std::fs::create_dir_all(&full_path.1)?;
         }
 
         trace!("creating file {:?}", &full_path.0);
@@ -86,18 +85,17 @@ impl VirtualPathBuf {
             .create(true)
             .truncate(true)
             .write(true)
-            .open(&full_path.0)
-            .context(format!("opening {:?}", &full_path.0))?;
+            .open(&full_path.0)?;
 
         file.sync_all()?;
 
         Ok(())
     }
 
-    pub fn read(&self, map: &PoolMap, offset: usize, buf: &mut [u8]) -> anyhow::Result<usize> {
+    pub fn read(&self, map: &PoolMap, offset: usize, buf: &mut [u8]) -> Result<usize, ShmrError> {
         let full_path = self.get_path(map)?;
 
-        let mut file = File::open(&full_path.0).context(format!("opening {:?}", &full_path.0))?;
+        let mut file = File::open(&full_path.0)?;
         file.seek(std::io::SeekFrom::Start(offset as u64))?;
         let read = file.read(buf)?;
 
@@ -108,14 +106,13 @@ impl VirtualPathBuf {
         Ok(read)
     }
 
-    pub fn write(&self, map: &PoolMap, offset: usize, buf: &[u8]) -> anyhow::Result<usize> {
+    pub fn write(&self, map: &PoolMap, offset: usize, buf: &[u8]) -> Result<usize, ShmrError> {
         let full_path = self.get_path(map)?;
 
         let mut file = OpenOptions::new()
             .write(true)
             // .truncate(true)
-            .open(&full_path.0)
-            .context("unable to open file")?;
+            .open(&full_path.0)?;
 
         file.seek(std::io::SeekFrom::Start(offset as u64))?;
         let written = file.write(buf)?;
@@ -130,10 +127,10 @@ impl VirtualPathBuf {
         Ok(written)
     }
 
-    pub fn delete(&self, map: &PoolMap) -> anyhow::Result<()> {
+    pub fn delete(&self, map: &PoolMap) -> Result<(), ShmrError> {
         let full_path = self.get_path(map)?;
 
-        std::fs::remove_file(&full_path.0).context(format!("removing {:?}", &full_path.0))?;
+        std::fs::remove_file(&full_path.0)?;
 
         debug!("Deleted file path: {:?}", full_path.0);
         Ok(())
@@ -212,4 +209,5 @@ mod tests {
 
         assert_eq!(result.unwrap().exists(), false);
     }
+
 }

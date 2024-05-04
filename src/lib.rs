@@ -1,9 +1,31 @@
+use std::io::Error;
 use rand::Rng;
 pub mod file;
 pub mod fsdb;
 pub mod fuse;
 pub mod storage;
 pub mod vpf;
+
+#[derive(Debug)]
+pub enum ShmrError {
+    InvalidPoolId,
+    InvalidBucketId,
+    OutOfSpace,
+    EndOfFile,
+    FsError(std::io::Error),
+    EcError(reed_solomon_erasure::Error)
+}
+impl From<std::io::Error> for ShmrError {
+    fn from(value: Error) -> Self {
+        Self::FsError(value)
+    }
+}
+impl From<reed_solomon_erasure::Error> for ShmrError {
+    fn from(value: reed_solomon_erasure::Error) -> Self {
+        Self::EcError(value)
+    }
+}
+
 
 // just some helper functions for now
 pub fn random_string() -> String {

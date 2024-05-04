@@ -1,13 +1,12 @@
 use std::cmp;
-use crate::random_string;
+use crate::{random_string, ShmrError};
 use crate::vpf::VirtualPathBuf;
-use anyhow::{bail, Result};
 use log::{debug, trace, warn};
 use rand::Rng;
 use reed_solomon_erasure::galois_8::ReedSolomon;
-use bincode::{Decode, Encode};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
 
 pub mod erasure;
 mod hash;
@@ -25,7 +24,7 @@ pub type PoolMap = (HashMap<String, HashMap<String, PathBuf>>, String);
 /// For ReedSolomon types, the block size is fixed on creation.
 ///
 /// TODO Improve Filename Generation
-#[derive(Encode, Decode, PartialEq, Debug, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum StorageBlock {
     /// Single Backing File
     Single(usize, VirtualPathBuf),
@@ -61,7 +60,7 @@ impl StorageBlock {
     }
 
     /// Initialize a Single StorageBlock
-    pub fn init_single(pool: &str, map: &PoolMap) -> Result<Self> {
+    pub fn init_single(pool: &str, map: &PoolMap) -> Result<Self, ShmrError> {
         Ok(StorageBlock::Single(DEFAULT_STORAGE_BLOCK_SIZE, VirtualPathBuf {
             pool: pool.to_string(),
             bucket: Self::select_bucket(pool, map),
@@ -70,7 +69,7 @@ impl StorageBlock {
     }
 
     /// Initialize a Mirror StorageBlock, with n number of copies
-    pub fn init_mirror(pool: &str, map: &PoolMap, copies: usize) -> Result<Self> {
+    pub fn init_mirror(pool: &str, map: &PoolMap, copies: usize) -> Result<Self, ShmrError> {
         let copies = (0..copies)
             .map(|_| VirtualPathBuf {
                 pool: pool.to_string(),
@@ -112,7 +111,7 @@ impl StorageBlock {
     }
 
     /// Create the storage block, creating the necessary directories and files
-    pub fn create(&self, map: &PoolMap) -> Result<()> {
+    pub fn create(&self, map: &PoolMap) -> Result<(), ShmrError> {
         match self {
             StorageBlock::Single(_, path) => path.create(map),
             StorageBlock::Mirror(_, copies) => {
@@ -131,7 +130,7 @@ impl StorageBlock {
     }
 
     /// Read the contents of the StorageBlock into the given buffer starting at the given offset
-    pub fn read(&self, map: &PoolMap, offset: usize, buf: &mut [u8]) -> Result<usize> {
+    pub fn read(&self, map: &PoolMap, offset: usize, buf: &mut [u8]) -> Result<usize, ShmrError> {
         if buf.is_empty() {
             // warn!("empty buffer passed to read function");
             return Ok(0);
@@ -173,7 +172,7 @@ impl StorageBlock {
     }
 
     /// Write the contents of the buffer to the StorageBlock at the given offset
-    pub fn write(&self, map: &PoolMap, offset: usize, buf: &[u8]) -> Result<usize> {
+    pub fn write(&self, map: &PoolMap, offset: usize, buf: &[u8]) -> Result<usize, ShmrError> {
         if buf.is_empty() {
             // warn!("empty buffer passed to read function");
             return Ok(0);
@@ -182,12 +181,12 @@ impl StorageBlock {
         match self {
             StorageBlock::Single(size, path) => {
                 if offset > *size {
-                    bail!("No Space Left")
+                    return Err(ShmrError::OutOfSpace)
                 }
                 path.write(map, offset, buf) },
             StorageBlock::Mirror(size, copies) => {
                 if offset > *size {
-                    bail!("No Space Left")
+                    return Err(ShmrError::OutOfSpace)
                 }
                 // TODO Write in parallel, wait for all to finish
                 // Write to all the sync shards
@@ -206,7 +205,7 @@ impl StorageBlock {
                 ..
             } => {
                 if offset > *size {
-                    bail!("No Space Left")
+                    return Err(ShmrError::OutOfSpace)
                 }
                 let r = ReedSolomon::new(topology.0.into(), topology.1.into())?;
 
@@ -222,7 +221,7 @@ impl StorageBlock {
         }
     }
 
-    pub fn verify(&self, map: &PoolMap) -> Result<bool> {
+    pub fn verify(&self, map: &PoolMap) -> Result<bool, ShmrError> {
         match self {
             StorageBlock::Single(_, path) => Ok(path.exists(map)),
             StorageBlock::Mirror(_, copies) => {
@@ -273,7 +272,7 @@ impl StorageBlock {
         }
     }
 
-    pub fn reconstruct(&self, _pool_map: &PoolMap) -> Result<()> {
+    pub fn reconstruct(&self, _pool_map: &PoolMap) -> Result<(), ShmrError> {
         todo!()
     }
 }

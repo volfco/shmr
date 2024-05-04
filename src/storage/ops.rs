@@ -1,6 +1,7 @@
 use crate::storage::{PoolMap, StorageBlock};
 use anyhow::Result;
 use log::debug;
+use crate::ShmrError;
 
 /// Replaces the given StorageBlock with one that is Erasure Encoded.
 pub fn replace_with_ec(
@@ -8,7 +9,7 @@ pub fn replace_with_ec(
     pool: &str,
     pool_map: &PoolMap,
     new_topology: (u8, u8),
-) -> Result<StorageBlock> {
+) -> Result<StorageBlock, ShmrError> {
     let mut contents = vec![];
     let m = old.read(pool_map, 0, &mut contents)?;
 

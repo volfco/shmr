@@ -1,9 +1,9 @@
 use crate::storage::PoolMap;
 use crate::vpf::VirtualPathBuf;
-use anyhow::Result;
 use log::{debug, error, trace, warn};
 use reed_solomon_erasure::galois_8::ReedSolomon;
 use std::time::Instant;
+use crate::ShmrError;
 
 /// Read the given sets of shards, reconstruct the data if applicable, and return the encoded data
 pub fn read(
@@ -11,7 +11,7 @@ pub fn read(
     pool_map: &PoolMap,
     shards: &[VirtualPathBuf],
     shard_size: usize,
-) -> Result<Vec<u8>> {
+) -> Result<Vec<u8>, ShmrError> {
     let mut shards = read_ec_shards(pool_map, shards, &shard_size);
 
     if shards
@@ -92,7 +92,7 @@ pub fn write(
     shards: &[VirtualPathBuf],
     shard_size: usize,
     buf: Vec<u8>,
-) -> Result<usize> {
+) -> Result<usize, ShmrError> {
     let mut data_shards = buf
         .chunks(shard_size)
         .map(|x| {
@@ -126,9 +126,10 @@ pub fn write(
     Ok(written)
 }
 
-pub fn update_ec_shards(shards: &mut [Vec<u8>], offset: usize, buf: &[u8]) -> Result<u8> {
+pub fn update_ec_shards(shards: &mut [Vec<u8>], offset: usize, buf: &[u8]) -> Result<u8, ShmrError> {
     if buf.len() > shards[0].len() * shards.len() {
-        return Err(anyhow::anyhow!("Data is too large for all the shards"));
+        warn!("Data is too large for all the shards");
+        return Err(ShmrError::OutOfSpace)
     }
 
     let shard_len = shards[0].len();

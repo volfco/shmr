@@ -1,15 +1,17 @@
+use serde::{Deserialize, Serialize};
+
 use crate::file::{DEFAULT_CHUNK_SIZE, VirtualFile};
-use crate::fsdb::FsDB;
+use crate::fsdb::FsDB2;
 use crate::storage::PoolMap;
 use fuser::{FileAttr, FileType, Filesystem, KernelConfig, ReplyAttr, ReplyDirectory, ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow, FUSE_ROOT_ID, ReplyData};
 use libc::c_int;
 use log::{debug, error, info, trace, warn};
-use bincode::{config, Decode, Encode};
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::os::unix::prelude::OsStrExt;
+use std::path::{PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use redb::{TypeName, Value};
+use crate::ShmrError;
 
 const MAX_NAME_LENGTH: u32 = 255;
 
@@ -30,7 +32,7 @@ fn system_time_from_time(secs: i64, nsecs: u32) -> SystemTime {
     }
 }
 
-#[derive(Encode, Decode, PartialEq, Debug, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum IFileType {
     /// Named pipe (S_IFIFO)
     NamedPipe,
@@ -61,7 +63,7 @@ impl From<IFileType> for fuser::FileType {
     }
 }
 
-#[derive(Encode, Decode, PartialEq, Debug, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct Inode {
     /// Inode number
     pub ino: u64,
@@ -95,32 +97,6 @@ pub struct Inode {
     pub flags: u32,
 
     pub xattrs: BTreeMap<Vec<u8>, Vec<u8>>,
-}
-impl Value for Inode {
-    type SelfType<'a> = Inode where Self: 'a;
-    type AsBytes<'a> = Vec<u8> where Self: 'a ;
-
-    fn fixed_width() -> Option<usize> {
-        None
-    }
-
-    fn from_bytes<'a>(data: &'a [u8]) -> Self where
-      Self: 'a, {
-        let config = config::standard();
-        
-        let (result, _len) = bincode::decode_from_slice(data, config).unwrap();
-
-        result
-    }
-
-    fn as_bytes<'a, 'b: 'a>(value: &Self) -> Vec<u8> {
-        let config = config::standard();
-        bincode::encode_to_vec(value, config).unwrap()
-    }
-    
-    fn type_name() -> TypeName {
-        TypeName::new("Inode")
-    }
 }
 impl Inode {
     pub fn check_access(&self, uid: u32, gid: u32, mut access_mask: i32) -> bool {
@@ -175,63 +151,54 @@ impl From<Inode> for FileAttr {
     }
 }
 
-#[derive(Encode, Decode, PartialEq, Debug, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum InodeDescriptor {
     File(VirtualFile),
     /// InodeDescriptor for a directory, where the BTreeMap is (filename -> inode)
     Directory(BTreeMap<Vec<u8>, u64>),
     Symlink,
 }
-impl Value for InodeDescriptor {
-    type SelfType<'a>  = InodeDescriptor where Self: 'a;
-    type AsBytes<'a> = Vec<u8> where Self: 'a   ;
-
-    fn fixed_width() -> Option<usize> {
-        None
-    }
-
-    fn from_bytes<'a>(data: &'a [u8]) -> Self where
-      Self: 'a, {
-        let config = config::standard();
-        
-        let (result, _len) = bincode::decode_from_slice(data, config).unwrap();
-
-        result
-    }
-
-    fn as_bytes<'a, 'b: 'a>(value: &Self) -> Vec<u8> {
-        let config = config::standard();
-        bincode::encode_to_vec(value, config).unwrap()
-    }
-
-    fn type_name() -> TypeName {
-        TypeName::new("Inode")
-    }
-}
-
 pub struct Shmr {
     pub pool_map: PoolMap,
-    pub fs_db: FsDB,
+    inode_db: FsDB2<u64, Inode>,
+    descriptor_db: FsDB2<u64, InodeDescriptor>
 }
 impl Shmr {
-    fn get_inode(&self, inode: u64) -> Result<Inode, c_int> {
-        match self.fs_db.read_inode(inode) {
-            Ok(inode) => Ok(inode),
-            Err(e) => {
-                error!("Failed to read inode {}: {:?}", inode, e);
-                Err(libc::EIO)
+    pub fn open(path: PathBuf, pool_map: PoolMap) -> Result<Self, ShmrError> {
+        let db_path = path.join("shmr");
+        Ok(Self {
+            pool_map,
+            inode_db: FsDB2::open(db_path.join("inode_db")).unwrap(),
+            descriptor_db: FsDB2::open(db_path.join("descriptor_db")).unwrap()
+        })
+    }
+    fn read_inode(&self, inode: u64) -> Result<Inode, c_int> {
+        match self.inode_db.get(&inode) {
+            None => { Err(libc::ENOENT) }
+            Some(inner) => {
+                Ok(inner.clone())
             }
         }
     }
+
+    fn read_descriptor(&self, inode: u64) -> Result<InodeDescriptor, c_int> {
+        match self.descriptor_db.get(&inode) {
+            None => { Err(libc::ENOENT) }
+            Some(inner) => {
+                Ok(inner.clone())
+            }
+        }
+    }
+
     fn check_access(&self, inode: u64, uid: u32, gid: u32, access_mask: i32) -> bool {
-        match self.get_inode(inode) {
+        match self.read_inode(inode) {
             Ok(inode) => inode.check_access(uid, gid, access_mask),
             Err(_) => false,
         }
     }
 
     fn get_directory_contents(&self, inode: u64) -> Result<BTreeMap<Vec<u8>, u64>, c_int> {
-        match self.fs_db.read_descriptor(inode) {
+        match self.read_descriptor(inode) {
             Ok(descriptor) => match descriptor {
                 InodeDescriptor::Directory(contents) => Ok(contents),
                 _ => {
@@ -254,7 +221,7 @@ impl Shmr {
         mode: u32,
         umask: u32,
         rdev: u32,
-    ) -> Result<Inode, c_int> {
+    ) -> Result<u64, c_int> {
         let file_type = mode & libc::S_IFMT;
 
         if file_type != libc::S_IFREG && file_type != libc::S_IFLNK && file_type != libc::S_IFDIR {
@@ -266,7 +233,7 @@ impl Shmr {
         }
 
         // check if we can write to this directory
-        let mut parent_inode = match self.get_inode(parent) {
+        let parent_inode = match self.read_inode(parent) {
             Ok(inode) => inode,
             Err(e) => {
                 error!("Failed to read parent inode {}: {:?}", parent, e);
@@ -284,7 +251,7 @@ impl Shmr {
         }
 
         // check if there is already an entry for the given name
-        let mut directory_contents = match self.get_directory_contents(parent) {
+        let directory_contents = match self.get_directory_contents(parent) {
             Ok(descriptor) => descriptor,
             Err(e) => {
                 error!("Failed to read directory contents {}: {:?}", parent, e);
@@ -306,8 +273,9 @@ impl Shmr {
             req.gid()
         };
 
+        let ino = self.inode_db.gen_id().unwrap();
         let child_inode = Inode {
-            ino: self.fs_db.generate_id().unwrap(),
+            ino,
             size: 0,
             blocks: 0,
             atime: time_now(),
@@ -330,12 +298,7 @@ impl Shmr {
             xattrs: BTreeMap::new(),
         };
         trace!("Creating child inode: {:?}", child_inode);
-        self.fs_db
-            .write_inode(child_inode.ino, &child_inode)
-            .map_err(|e| {
-                error!("Failed to write child inode: {:?}", e);
-                libc::EIO
-            })?;
+        self.inode_db.insert(ino, child_inode);
 
         let child_descriptor = match file_type {
             libc::S_IFREG => InodeDescriptor::File(VirtualFile::new()),
@@ -344,46 +307,36 @@ impl Shmr {
             _ => unimplemented!(),
         };
         trace!("Creating child topology: {:?}", child_descriptor);
-        self.fs_db
-            .write_descriptor(child_inode.ino, &child_descriptor)
-            .map_err(|e| {
-                error!("Failed to write child topology: {:?}", e);
-                libc::EIO
-            })?;
+        self.descriptor_db.insert(ino, child_descriptor);
 
         // Update the Parent's metadata
-        parent_inode.nlink += 1;
-        parent_inode.mtime = time_now();
-        parent_inode.ctime = time_now();
-        self.fs_db
-            .write_inode(parent_inode.ino, &parent_inode)
-            .map_err(|e| {
-                error!("Failed to write parent inode: {:?}", e);
-                libc::EIO
-            })?;
+        {
+            let mut parent_write = self.inode_db.get_mut(&parent).unwrap();
+            parent_write.nlink += 1;
+            parent_write.mtime = time_now();
+            parent_write.ctime = time_now();
+        }
 
         // update the parent's directory contents
-        directory_contents.insert(name.as_bytes().to_vec(), child_inode.ino);
-        self.fs_db
-            .write_descriptor(
-                parent_inode.ino,
-                &InodeDescriptor::Directory(directory_contents),
-            )
-            .map_err(|e| {
-                error!("Failed to write parent topology: {:?}", e);
-                libc::EIO
-            })?;
+        {
+            let mut write = self.descriptor_db.get_mut(&parent).unwrap();
+            match &mut *write {
+                InodeDescriptor::Directory(entries) => {
+                    entries.insert(name.as_bytes().to_vec(), ino);
+                }
+                _ => panic!()
+            }
+        }
 
-        Ok(child_inode)
+        Ok(ino)
     }
 }
 impl Filesystem for Shmr {
     fn init(&mut self, _req: &Request<'_>, _config: &mut KernelConfig) -> Result<(), c_int> {
-        // perform a re-index of the filesystem on init
-        self.fs_db.check_init().unwrap();
-        if !self.fs_db.check_inode(FUSE_ROOT_ID).unwrap() {
+        if !self.inode_db.has(&FUSE_ROOT_ID) {
             info!("inode 0 does not exist, creating root node");
-            let inode = Inode {
+
+            self.inode_db.insert(FUSE_ROOT_ID, Inode {
                 ino: FUSE_ROOT_ID,
                 size: 0,
                 blocks: 0,
@@ -400,23 +353,16 @@ impl Filesystem for Shmr {
                 blksize: 0,
                 flags: 0,
                 xattrs: BTreeMap::new(),
-            };
-            self.fs_db.write_inode(FUSE_ROOT_ID, &inode).map_err(|e| {
-                error!("Failed to write root inode: {:?}", e);
-                libc::EIO
-            })?;
+            });
 
-            let topology = InodeDescriptor::Directory({
+            self.descriptor_db.insert(FUSE_ROOT_ID, InodeDescriptor::Directory({
                 let mut inner = BTreeMap::new();
                 inner.insert(b".".to_vec(), FUSE_ROOT_ID);
                 inner
-            });
-            self.fs_db
-                .write_descriptor(FUSE_ROOT_ID, &topology)
-                .map_err(|e| {
-                    error!("Failed to write root topology: {:?}", e);
-                    libc::EIO
-                })?;
+            }));
+
+            let _ = self.inode_db.flush_all();
+            let _ = self.descriptor_db.flush_all();
         }
         Ok(())
     }
@@ -445,7 +391,7 @@ impl Filesystem for Shmr {
 
         match directory_contents.get(name.as_bytes()) {
             Some(entry_inode) => {
-                let attrs = match self.fs_db.read_inode(*entry_inode) {
+                let attrs = match self.read_inode(*entry_inode) {
                     Err(e) => {
                         error!("Unable to read inode {}: {:?}", entry_inode, e);
                         reply.error(libc::EIO);
@@ -461,7 +407,7 @@ impl Filesystem for Shmr {
 
     fn getattr(&mut self, req: &Request<'_>, ino: u64, reply: ReplyAttr) {
         trace!("FUSE({}) 'getattr' invoked for inode {}", req.unique(), ino);
-        match self.get_inode(ino) {
+        match self.read_inode(ino) {
             Ok(inode) => {
                 reply.attr(&Duration::new(0, 0), &inode.into());
             }
@@ -491,25 +437,25 @@ impl Filesystem for Shmr {
     ) {
         trace!("FUSE({}) 'setattr' invoked on inode {}", req.unique(), ino);
 
-        let mut parent_attr = match self.get_inode(ino) {
-            Ok(inode) => inode,
-            Err(e) => {
-                reply.error(e);
+        let mut inode = match self.inode_db.get_mut(&ino) {
+            None => {
+                reply.error(libc::ENOENT);
                 return;
             }
+            Some(inner) => inner
         };
 
         if mode.is_some() {
-            parent_attr.perm = mode.unwrap() as u16;
+            inode.perm = mode.unwrap() as u16;
         }
         if uid.is_some() {
-            parent_attr.uid = uid.unwrap();
+            inode.uid = uid.unwrap();
         }
         if gid.is_some() {
-            parent_attr.gid = gid.unwrap();
+            inode.gid = gid.unwrap();
         }
         if size.is_some() {
-            parent_attr.size = size.unwrap();
+            inode.size = size.unwrap();
         }
         if atime.is_some() {
             match atime.unwrap() {
@@ -517,14 +463,14 @@ impl Filesystem for Shmr {
                     let since_the_epoch = time
                         .duration_since(UNIX_EPOCH)
                         .expect("Time went backwards");
-                    parent_attr.atime = (
+                    inode.atime = (
                         since_the_epoch.as_secs() as i64,
                         since_the_epoch.subsec_nanos(),
                     );
                 }
                 TimeOrNow::Now => {
                     let (sec, nsec) = time_now();
-                    parent_attr.atime = (sec, nsec);
+                    inode.atime = (sec, nsec);
                 }
             }
         }
@@ -534,14 +480,14 @@ impl Filesystem for Shmr {
                     let since_the_epoch = time
                         .duration_since(UNIX_EPOCH)
                         .expect("Time went backwards");
-                    parent_attr.atime = (
+                    inode.atime = (
                         since_the_epoch.as_secs() as i64,
                         since_the_epoch.subsec_nanos(),
                     );
                 }
                 TimeOrNow::Now => {
                     let (sec, nsec) = time_now();
-                    parent_attr.atime = (sec, nsec);
+                    inode.atime = (sec, nsec);
                 }
             }
         }
@@ -550,7 +496,7 @@ impl Filesystem for Shmr {
                 .unwrap()
                 .duration_since(UNIX_EPOCH)
                 .expect("Time went backwards");
-            parent_attr.ctime = (
+            inode.ctime = (
                 since_the_epoch.as_secs() as i64,
                 since_the_epoch.subsec_nanos(),
             );
@@ -560,13 +506,13 @@ impl Filesystem for Shmr {
                 .unwrap()
                 .duration_since(UNIX_EPOCH)
                 .expect("Time went backwards");
-            parent_attr.crtime = (
+            inode.crtime = (
                 since_the_epoch.as_secs() as i64,
                 since_the_epoch.subsec_nanos(),
             );
         }
         if flags.is_some() {
-            parent_attr.flags = flags.unwrap();
+            inode.flags = flags.unwrap();
         }
         if fh.is_some() {
             unimplemented!("fh not implemented");
@@ -578,19 +524,14 @@ impl Filesystem for Shmr {
             unimplemented!("bkuptime not implemented");
         }
 
-        if let Err(e) = self.fs_db.write_inode(ino, &parent_attr) {
-            error!("Failed to write inode {}: {:?}", ino, e);
-            reply.error(libc::EIO);
-            return;
-        }
-
         debug!(
             "FUSE({}) 'setattr' success. inode {} updated",
             req.unique(),
             ino
         );
 
-        reply.attr(&Duration::new(0, 0), &parent_attr.into());
+        let fa: FileAttr = inode.clone().into();
+        reply.attr(&Duration::new(0, 0), &fa);
     }
 
     /// Create a file node
@@ -607,7 +548,8 @@ impl Filesystem for Shmr {
     ) {
         match self.create(_req, parent, name, mode, umask, rdev) {
             Ok(inode) => {
-                reply.entry(&Duration::new(0, 0), &inode.into(), 0);
+                let fa: FileAttr = (self.inode_db.get(&inode).unwrap().clone()).into();
+                reply.entry(&Duration::new(0, 0), &fa, 0);
             }
             Err(e) => {
                 reply.error(e);
@@ -626,7 +568,8 @@ impl Filesystem for Shmr {
     ) {
         match self.create(req, parent, name, mode | libc::S_IFDIR, umask, 0) {
             Ok(inode) => {
-                reply.entry(&Duration::new(0, 0), &inode.into(), 0);
+                let fa: FileAttr = (self.inode_db.get(&inode).unwrap().clone()).into();
+                reply.entry(&Duration::new(0, 0), &fa, 0);
             }
             Err(e) => {
                 reply.error(e);
@@ -655,30 +598,30 @@ impl Filesystem for Shmr {
         );
 
         assert!(offset >= 0);
-        let file_inode = match self.fs_db.read_inode(ino) {
-            Ok(inode) => inode,
-            Err(e) => {
-                error!("Failed to read inode {}: {:?}", ino, e);
+        // TODO Access Control stuff here
+        // let file_inode = match self.read_inode(ino) {
+        //     Ok(inode) => inode,
+        //     Err(e) => {
+        //         error!("Failed to read inode {}: {:?}", ino, e);
+        //         reply.error(libc::ENOENT);
+        //         return;
+        //     }
+        // };
+        //
+        // if !file_inode.check_access(req.uid(), req.gid(), libc::W_OK) {
+        //     reply.error(libc::EACCES);
+        //     return;
+        // }
+
+        let descriptor = match self.descriptor_db.get(&ino) {
+            Some(descriptor) => descriptor,
+            None => {
                 reply.error(libc::ENOENT);
                 return;
             }
         };
 
-        if !file_inode.check_access(req.uid(), req.gid(), libc::W_OK) {
-            reply.error(libc::EACCES);
-            return;
-        }
-
-        let descriptor = match self.fs_db.read_descriptor(ino) {
-            Ok(descriptor) => descriptor,
-            Err(e) => {
-                error!("Failed to read descriptor {}: {:?}", ino, e);
-                reply.error(libc::EIO);
-                return;
-            }
-        };
-
-        let vf = match descriptor {
+        let vf = match &*descriptor {
             InodeDescriptor::File(vf) => vf,
             _ => {
                 error!("Inode {} is not a file", ino);
@@ -726,10 +669,10 @@ impl Filesystem for Shmr {
         //   return;
         // }
 
-        let mut file_inode = match self.fs_db.read_inode(ino) {
-            Ok(inode) => inode,
-            Err(e) => {
-                error!("Failed to read inode {}: {:?}", ino, e);
+        let mut file_inode = match self.inode_db.get_mut(&ino) {
+            Some(inode) => inode,
+            None => {
+                // error!("Failed to read inode {}: {:?}", ino, e);
                 reply.error(libc::ENOENT);
                 return;
             }
@@ -740,16 +683,16 @@ impl Filesystem for Shmr {
             return;
         }
 
-        let descriptor = match self.fs_db.read_descriptor(ino) {
-            Ok(descriptor) => descriptor,
-            Err(e) => {
-                error!("Failed to read descriptor {}: {:?}", ino, e);
-                reply.error(libc::EIO);
+
+        let mut descriptor = match self.descriptor_db.get_mut(&ino) {
+            Some(descriptor) => descriptor,
+            None => {
+                reply.error(libc::ENOENT);
                 return;
             }
         };
 
-        let mut vf = match descriptor {
+        let vf = match &mut *descriptor {
             InodeDescriptor::File(vf) => vf,
             _ => {
                 error!("Inode {} is not a file", ino);
@@ -758,7 +701,7 @@ impl Filesystem for Shmr {
             }
         };
 
-        match vf.write(&self.pool_map, offset as usize, data) {
+        match &mut vf.write(&self.pool_map, offset as usize, data) {
             Ok(amount) => {
                 // update the inode
                 file_inode.size = vf.size();
@@ -766,11 +709,7 @@ impl Filesystem for Shmr {
                 file_inode.mtime = time_now();
                 file_inode.atime = time_now();
 
-                // write the updated descriptor, aka the VirtualFile
-                self.fs_db.write_descriptor(ino, &InodeDescriptor::File(vf)).unwrap();
-                self.fs_db.write_inode(ino, &file_inode).unwrap();
-
-                reply.written(amount as u32);
+                reply.written(*amount as u32);
             }
             Err(e) => {
                 error!("Failed to write data to file: {:?}", e);
