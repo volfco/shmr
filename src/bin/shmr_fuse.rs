@@ -7,8 +7,8 @@ use fuser::MountOption;
 use log::{error, LevelFilter};
 use serde::{Deserialize, Serialize};
 use shmr::fuse::Shmr;
-use std::path::PathBuf;
 use shmr::storage::Engine;
+use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]

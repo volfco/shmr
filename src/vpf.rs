@@ -1,8 +1,8 @@
 use crate::storage::PoolMap;
-use log::{error, trace};
-use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
 use crate::ShmrError;
+use log::{error, trace};
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 // use rkyv::with::Skip;
 
 /// VirtualPathBuf is like PathBuf, but the location of the pool is not stored in the path itself.
@@ -26,9 +26,7 @@ impl VirtualPathBuf {
     /// Return the (Filename, Directory) for the file.
     /// It's inverted to avoid needing to create a copy of the directory name before joining the filename
     pub fn resolve(&self, map: &PoolMap) -> Result<(PathBuf, PathBuf), ShmrError> {
-        let pool_map = map
-            .get(&self.pool)
-            .ok_or(ShmrError::InvalidPoolId)?;
+        let pool_map = map.get(&self.pool).ok_or(ShmrError::InvalidPoolId)?;
 
         let mut path_buf = pool_map
             .get(&self.bucket)
@@ -41,7 +39,9 @@ impl VirtualPathBuf {
         let result = (path_buf.join(&self.filename), path_buf);
         trace!(
             "Resolved path for {:?} to (file: {:?}, dir: {:?})",
-            self, result.0, result.1
+            self,
+            result.0,
+            result.1
         );
 
         Ok(result)
@@ -61,7 +61,6 @@ impl VirtualPathBuf {
             }
         }
     }
-
 }
 
 //

@@ -39,11 +39,10 @@
 // }
 
 fn main() {
-  // let root_inode = 1;
-  // let fs_db = FsDB::open(PathBuf::from("./metadata")).unwrap();
-  //
-  // println!();
-  // println!();
-  // enter_dir(&fs_db, root_inode, 1);
-
+    // let root_inode = 1;
+    // let fs_db = FsDB::open(PathBuf::from("./metadata")).unwrap();
+    //
+    // println!();
+    // println!();
+    // enter_dir(&fs_db, root_inode, 1);
 }

@@ -1,15 +1,14 @@
+use crate::ShmrError;
+use chashmap::{CHashMap, ReadGuard, WriteGuard};
+use log::{debug, error, info, trace};
+use serde::{de::DeserializeOwned, Serialize};
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::path::{Path};
+use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-use serde::{Serialize, de::DeserializeOwned};
-use chashmap::{CHashMap, ReadGuard, WriteGuard};
-use log::{debug, error, info, trace};
-use crate::ShmrError;
-
 
 /*
  Need to have these traits:
@@ -24,7 +23,10 @@ const FLUSH_INTERVAL: u64 = 500; // in ms
 /// Basic In-memory database with persistence.
 ///
 #[derive(Clone)]
-pub struct FsDB2<K: Serialize + DeserializeOwned + Eq + Hash + Clone + Send + Sync + Debug+ 'static, V: Serialize + DeserializeOwned + Clone + Send + Sync+ 'static> {
+pub struct FsDB2<
+    K: Serialize + DeserializeOwned + Eq + Hash + Clone + Send + Sync + Debug + 'static,
+    V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
+> {
     /// HashMap of individual database entries, which each have their own lock
     entries: Arc<CHashMap<K, V>>,
     /// Vec of Dirty IDs
@@ -33,9 +35,13 @@ pub struct FsDB2<K: Serialize + DeserializeOwned + Eq + Hash + Clone + Send + Sy
     db: sled::Db,
 
     run_state: Arc<Mutex<bool>>,
-    flusher: Arc<Mutex<Option<JoinHandle<()>>>>
+    flusher: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
-impl<K: Serialize + DeserializeOwned + Eq + Hash + Clone + Send + Sync + Debug + 'static, V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static> FsDB2<K, V> {
+impl<
+        K: Serialize + DeserializeOwned + Eq + Hash + Clone + Send + Sync + Debug + 'static,
+        V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
+    > FsDB2<K, V>
+{
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, ShmrError> {
         let db: Result<sled::Db, sled::Error> = sled::open(path);
         let db = db.unwrap();
@@ -51,7 +57,7 @@ impl<K: Serialize + DeserializeOwned + Eq + Hash + Clone + Send + Sync + Debug +
         let interval = Duration::from_millis(FLUSH_INTERVAL);
         let thread_self = s.clone();
 
-        let thread_handle = thread::spawn(move ||{
+        let thread_handle = thread::spawn(move || {
             // TODO support a rapid shutdown,
             loop {
                 {
@@ -99,7 +105,11 @@ impl<K: Serialize + DeserializeOwned + Eq + Hash + Clone + Send + Sync + Debug +
             let _ = self.entries.insert(kd, vd);
         }
 
-        info!("loaded {} entries. took {:?}", self.entries.len(), start.elapsed());
+        info!(
+            "loaded {} entries. took {:?}",
+            self.entries.len(),
+            start.elapsed()
+        );
         Ok(())
     }
     pub fn gen_id(&self) -> Result<u64, ShmrError> {
@@ -107,14 +117,15 @@ impl<K: Serialize + DeserializeOwned + Eq + Hash + Clone + Send + Sync + Debug +
     }
     pub fn get(&self, ident: &K) -> Option<ReadGuard<K, V>> {
         match self.entries.get(ident) {
-            Some(entry) => { Some(entry) }
+            Some(entry) => Some(entry),
             None => {
                 // try and load the entry from disk
                 let key = bincode::serialize(ident).unwrap();
                 match self.db.get(key).unwrap() {
                     None => None,
                     Some(raw) => {
-                        self.entries.insert(ident.clone(), bincode::deserialize(&raw[..]).unwrap());
+                        self.entries
+                            .insert(ident.clone(), bincode::deserialize(&raw[..]).unwrap());
                         self.entries.get(ident)
                     }
                 }
@@ -146,7 +157,10 @@ impl<K: Serialize + DeserializeOwned + Eq + Hash + Clone + Send + Sync + Debug +
             let raw = bincode::serialize(&*inner).unwrap();
             let _ = self.db.insert(raw_id, raw).unwrap();
         } else {
-            debug!("entity id {:?} does not exist in main map. assuming deleted", ident);
+            debug!(
+                "entity id {:?} does not exist in main map. assuming deleted",
+                ident
+            );
             // todo!("remove entry from sled Db")
         }
 
@@ -170,7 +184,10 @@ impl<K: Serialize + DeserializeOwned + Eq + Hash + Clone + Send + Sync + Debug +
                 let raw = bincode::serialize(&*inner).unwrap();
                 let _ = self.db.insert(raw_id, raw).unwrap();
             } else {
-                debug!("entity id {:?} does not exist in main map. assuming deleted", entry_id);
+                debug!(
+                    "entity id {:?} does not exist in main map. assuming deleted",
+                    entry_id
+                );
                 // todo!("remove entry from sled Db")
             }
         }
@@ -181,7 +198,11 @@ impl<K: Serialize + DeserializeOwned + Eq + Hash + Clone + Send + Sync + Debug +
         Ok(())
     }
 }
-impl<K: Serialize + DeserializeOwned + Eq + Hash + Clone + Send + Sync + Debug + 'static, V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static> Drop for FsDB2<K, V> {
+impl<
+        K: Serialize + DeserializeOwned + Eq + Hash + Clone + Send + Sync + Debug + 'static,
+        V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
+    > Drop for FsDB2<K, V>
+{
     fn drop(&mut self) {
         debug!("FsDB2 Dropped. shutting down");
         let mut run = self.run_state.lock().unwrap();
@@ -205,17 +226,15 @@ impl<K: Serialize + DeserializeOwned + Eq + Hash + Clone + Send + Sync + Debug +
                 }
             }
             drop(join_handle_opt);
-
         }
     }
 }
 
-
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-    use log::warn;
     use super::*;
+    use log::warn;
+    use std::path::PathBuf;
 
     #[test]
     fn test_fsdb2_insertion_and_retrieval() {
@@ -253,17 +272,18 @@ mod tests {
 
             // Flush
             db.flush_all().unwrap();
-
         } // Dropping FsDb2
 
         // Directly open the underlying sled db and retrieve the value
         let sled_db = sled::open(&db_path).unwrap();
         let raw_key_to_find = bincode::serialize(&"test_key".to_string()).unwrap();
-        let raw_value_in_sled = sled_db.get(raw_key_to_find).unwrap().expect("The key was not found in sled DB");
+        let raw_value_in_sled = sled_db
+            .get(raw_key_to_find)
+            .unwrap()
+            .expect("The key was not found in sled DB");
         info!("got {:?}", &raw_value_in_sled);
 
         let decoded_value_in_sled: String = bincode::deserialize(&raw_value_in_sled).unwrap();
-
 
         assert_eq!(decoded_value_in_sled, "test_value".to_string());
     }
@@ -289,17 +309,18 @@ mod tests {
 
             // wait 2 seconds before continuing
             thread::sleep(Duration::from_secs(2));
-
         } // Dropping FsDb2
 
         // Directly open the underlying sled db and retrieve the value
         let sled_db = sled::open(&db_path).unwrap();
         let raw_key_to_find = bincode::serialize(&"test_key".to_string()).unwrap();
-        let raw_value_in_sled = sled_db.get(raw_key_to_find).unwrap().expect("The key was not found in sled DB");
+        let raw_value_in_sled = sled_db
+            .get(raw_key_to_find)
+            .unwrap()
+            .expect("The key was not found in sled DB");
         info!("got {:?}", &raw_value_in_sled);
 
         let decoded_value_in_sled: String = bincode::deserialize(&raw_value_in_sled).unwrap();
-
 
         assert_eq!(decoded_value_in_sled, "test_value".to_string());
     }
@@ -330,7 +351,10 @@ mod tests {
         // Directly open the underlying sled db and retrieve the value
         let sled_db = sled::open(&db_path).unwrap();
         let raw_key_to_find = bincode::serialize(&"test_key".to_string()).unwrap();
-        let raw_value_in_sled = sled_db.get(raw_key_to_find).unwrap().expect("The key was not found in sled DB");
+        let raw_value_in_sled = sled_db
+            .get(raw_key_to_find)
+            .unwrap()
+            .expect("The key was not found in sled DB");
         let decoded_value_in_sled: String = bincode::deserialize(&raw_value_in_sled).unwrap();
 
         assert_eq!(decoded_value_in_sled, "test_value".to_string());

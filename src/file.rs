@@ -3,12 +3,12 @@ use std::cmp;
 //       Then step through moving it from a single buffer file, to one with multiple StorageBlocks.
 //       Then do some I/O operations on it.
 use crate::storage::{Engine, StorageBlock};
-use anyhow::{Result};
+use crate::ShmrError;
+use anyhow::Result;
 use log::trace;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use crate::ShmrError;
 
 /// Default Chunk Size. Also used as the inode block size for FUSE stuffs
 ///
@@ -29,7 +29,7 @@ pub struct VirtualFile {
     chunk_map: Vec<(usize, usize)>,
 
     /// List of StorageBlocks, in order, that make up the file
-    pub blocks: Vec<StorageBlock>
+    pub blocks: Vec<StorageBlock>,
 }
 impl Default for VirtualFile {
     fn default() -> Self {
@@ -42,7 +42,7 @@ impl VirtualFile {
             size: 0,
             chunk_size: 4096,
             chunk_map: vec![],
-            blocks: vec![]
+            blocks: vec![],
         }
     }
 
@@ -89,7 +89,13 @@ impl VirtualFile {
             if self.chunk_map.is_empty() || self.chunk_map.len() <= chunk_idx {
                 self.allocate_block(engine)?;
             }
-            let (block_idx, block_pos) = self.chunk_map.get(chunk_idx).unwrap_or_else(|| panic!("chunk_idx: {}. chunk_map len: {}", chunk_idx, self.chunk_map.len()) );
+            let (block_idx, block_pos) = self.chunk_map.get(chunk_idx).unwrap_or_else(|| {
+                panic!(
+                    "chunk_idx: {}. chunk_map len: {}",
+                    chunk_idx,
+                    self.chunk_map.len()
+                )
+            });
 
             let buf_end = cmp::min(written + self.chunk_size, bf);
             written += self.blocks[*block_idx].write(engine, *block_pos, &buf[written..buf_end])?;
@@ -110,15 +116,15 @@ impl VirtualFile {
         }
 
         if pos > self.size {
-            return Err(ShmrError::EndOfFile)
+            return Err(ShmrError::EndOfFile);
         }
 
-        let mut read = 0;  // amount read
-        let mut chk_pos = pos % self.chunk_size;  // initial chunk offset
+        let mut read = 0; // amount read
+        let mut chk_pos = pos % self.chunk_size; // initial chunk offset
         let pos_chk = pos / self.chunk_size;
-        let buf_chk = bf / self.chunk_size + (chk_pos != 0) as usize;  // got this nifty solution off Reddit. Thanks /u/HeroicKatora
+        let buf_chk = bf / self.chunk_size + (chk_pos != 0) as usize; // got this nifty solution off Reddit. Thanks /u/HeroicKatora
 
-        let chunk_range = pos_chk..=pos_chk+buf_chk;
+        let chunk_range = pos_chk..=pos_chk + buf_chk;
 
         for idx in chunk_range {
             let (block_idx, block_pos) = self.chunk_map.get(idx).expect("wtf bro");
@@ -143,8 +149,8 @@ impl VirtualFile {
 mod tests {
     use super::*;
     use crate::random_data;
-    use crate::tests::get_pool;
     use crate::storage::Engine;
+    use crate::tests::get_pool;
 
     #[test]
     fn test_virtual_file_write_one_block() {
@@ -180,7 +186,6 @@ mod tests {
         let result = vf.write(&engine, 0, &buffer);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 200);
-
 
         // read it back
         let mut read_buffer = [0; 200];

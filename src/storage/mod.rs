@@ -1,17 +1,15 @@
-use std::cmp;
-use crate::{random_string, ShmrError};
 use crate::vpf::VirtualPathBuf;
-use log::{debug, error, info, trace, warn};
+use crate::{random_string, ShmrError};
+use log::{debug, error, trace, warn};
 use rand::Rng;
 use reed_solomon_erasure::galois_8::ReedSolomon;
+use serde::{Deserialize, Serialize};
+use std::cmp;
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
-use std::sync::atomic::{AtomicU8, Ordering};
-use chashmap::{CHashMap, ReadGuard};
-use serde::{Deserialize, Serialize};
 
 pub mod erasure;
 mod hash;
@@ -49,10 +47,7 @@ impl Engine {
     fn open_handle(&self, vpf: &VirtualPathBuf) -> Result<(), ShmrError> {
         let path = vpf.resolve_path(&self.pools)?;
 
-        let handle = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&path)?;
+        let handle = OpenOptions::new().read(true).write(true).open(&path)?;
 
         let mut wh = self.handles.write().unwrap();
         if wh.contains_key(vpf) {
@@ -81,10 +76,10 @@ impl Engine {
         trace!("creating file {:?}", &full_path.0);
 
         let file = OpenOptions::new()
-          .create(true)
-          .truncate(true)
-          .write(true)
-          .open(&full_path.0)?;
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&full_path.0)?;
 
         // close the handle
         drop(file);
@@ -105,7 +100,12 @@ impl Engine {
         Ok(())
     }
 
-    pub fn read(&self, vpf: &VirtualPathBuf, offset: usize, buf: &mut [u8]) -> Result<usize, ShmrError> {
+    pub fn read(
+        &self,
+        vpf: &VirtualPathBuf,
+        offset: usize,
+        buf: &mut [u8],
+    ) -> Result<usize, ShmrError> {
         {
             let handles_handle = self.handles.read().unwrap();
             if !handles_handle.contains_key(vpf) {
@@ -119,14 +119,16 @@ impl Engine {
 
         file_handle.seek(std::io::SeekFrom::Start(offset as u64))?;
         let read = file_handle.read(buf)?;
-        debug!(
-            "Read {} bytes to {:?} at offset {}",
-            read, entry.1, offset
-        );
+        debug!("Read {} bytes to {:?} at offset {}", read, entry.1, offset);
         Ok(read)
     }
 
-    pub fn write(&self, vpf: &VirtualPathBuf, offset: usize, buf: &[u8]) -> Result<usize, ShmrError> {
+    pub fn write(
+        &self,
+        vpf: &VirtualPathBuf,
+        offset: usize,
+        buf: &[u8],
+    ) -> Result<usize, ShmrError> {
         {
             let handles_handle = self.handles.read().unwrap();
             if !handles_handle.contains_key(vpf) {
@@ -147,7 +149,6 @@ impl Engine {
         Ok(written)
     }
 }
-
 
 /// Represent a Single StorageBlock, the basic component of a VirtualFile.
 ///
@@ -192,11 +193,14 @@ impl StorageBlock {
 
     /// Initialize a Single StorageBlock
     pub fn init_single(pool: &str, pools: &PoolMap) -> Result<Self, ShmrError> {
-        Ok(StorageBlock::Single(DEFAULT_STORAGE_BLOCK_SIZE, VirtualPathBuf {
-            pool: pool.to_string(),
-            bucket: Self::select_bucket(pool, pools),
-            filename: format!("{}.dat", random_string()),
-        }))
+        Ok(StorageBlock::Single(
+            DEFAULT_STORAGE_BLOCK_SIZE,
+            VirtualPathBuf {
+                pool: pool.to_string(),
+                bucket: Self::select_bucket(pool, pools),
+                filename: format!("{}.dat", random_string()),
+            },
+        ))
     }
 
     /// Initialize a Mirror StorageBlock, with n number of copies
@@ -270,11 +274,11 @@ impl StorageBlock {
             StorageBlock::Single(_, path) => {
                 // path.read(map, offset, buf)
                 engine.read(path, offset, buf)
-            },
+            }
             StorageBlock::Mirror(_, copies) => {
                 // TODO Read in parallel, and return the first successful read
                 for path in copies {
-                    match engine.read(path, offset, buf){
+                    match engine.read(path, offset, buf) {
                         Ok(result) => return Ok(result),
                         Err(e) => error!("Error reading from path: {:?}", e),
                     }
@@ -315,12 +319,13 @@ impl StorageBlock {
         match self {
             StorageBlock::Single(size, path) => {
                 if offset > *size {
-                    return Err(ShmrError::OutOfSpace)
+                    return Err(ShmrError::OutOfSpace);
                 }
-                engine.write(path, offset, buf) },
+                engine.write(path, offset, buf)
+            }
             StorageBlock::Mirror(size, copies) => {
                 if offset > *size {
-                    return Err(ShmrError::OutOfSpace)
+                    return Err(ShmrError::OutOfSpace);
                 }
                 // TODO Write in parallel, wait for all to finish
                 // Write to all the sync shards
@@ -339,7 +344,7 @@ impl StorageBlock {
                 ..
             } => {
                 if offset > *size {
-                    return Err(ShmrError::OutOfSpace)
+                    return Err(ShmrError::OutOfSpace);
                 }
                 let r = ReedSolomon::new(topology.0.into(), topology.1.into())?;
 
@@ -359,7 +364,8 @@ impl StorageBlock {
         match self {
             StorageBlock::Single(_, path) => Ok(path.exists(&engine.pools)),
             StorageBlock::Mirror(_, copies) => {
-                Ok(copies.iter().all(|path| path.exists(&engine.pools)) && hash::compare(&engine.pools, copies))
+                Ok(copies.iter().all(|path| path.exists(&engine.pools))
+                    && hash::compare(&engine.pools, copies))
             }
             StorageBlock::ReedSolomon {
                 shards,
@@ -413,8 +419,8 @@ impl StorageBlock {
 
 #[cfg(test)]
 mod tests {
-    use crate::random_data;
     use super::*;
+    use crate::random_data;
     use crate::tests::get_pool;
     // TODO Add tests for verifying the data
 
@@ -425,11 +431,14 @@ mod tests {
 
         let engine: Engine = Engine::new("test_pool".to_string(), get_pool());
 
-        let sb = StorageBlock::Single(DEFAULT_STORAGE_BLOCK_SIZE, VirtualPathBuf {
-            pool: "test_pool".to_string(),
-            bucket: "bucket1".to_string(),
-            filename,
-        });
+        let sb = StorageBlock::Single(
+            DEFAULT_STORAGE_BLOCK_SIZE,
+            VirtualPathBuf {
+                pool: "test_pool".to_string(),
+                bucket: "bucket1".to_string(),
+                filename,
+            },
+        );
 
         // create it
         let create = sb.create(&engine);
@@ -461,18 +470,21 @@ mod tests {
 
         let engine: Engine = Engine::new("test_pool".to_string(), get_pool());
 
-        let sb = StorageBlock::Mirror(DEFAULT_STORAGE_BLOCK_SIZE, vec![
-            VirtualPathBuf {
-                pool: "test_pool".to_string(),
-                bucket: "bucket1".to_string(),
-                filename: filename1,
-            },
-            VirtualPathBuf {
-                pool: "test_pool".to_string(),
-                bucket: "bucket1".to_string(),
-                filename: filename2,
-            },
-        ]);
+        let sb = StorageBlock::Mirror(
+            DEFAULT_STORAGE_BLOCK_SIZE,
+            vec![
+                VirtualPathBuf {
+                    pool: "test_pool".to_string(),
+                    bucket: "bucket1".to_string(),
+                    filename: filename1,
+                },
+                VirtualPathBuf {
+                    pool: "test_pool".to_string(),
+                    bucket: "bucket1".to_string(),
+                    filename: filename2,
+                },
+            ],
+        );
 
         // create the mirror block
         let create = sb.create(&engine);
@@ -522,7 +534,7 @@ mod tests {
 
         let ec_block = StorageBlock::init_ec(&engine.write_pool, &engine.pools, (3, 2), shard_size);
         let valid = match ec_block {
-            StorageBlock::Single( .. ) => false,
+            StorageBlock::Single(..) => false,
             StorageBlock::Mirror { .. } => false,
             StorageBlock::ReedSolomon {
                 version,

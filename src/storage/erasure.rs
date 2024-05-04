@@ -1,9 +1,9 @@
-use crate::storage::{Engine};
+use crate::storage::Engine;
 use crate::vpf::VirtualPathBuf;
+use crate::ShmrError;
 use log::{debug, error, trace, warn};
 use reed_solomon_erasure::galois_8::ReedSolomon;
 use std::time::Instant;
-use crate::ShmrError;
 
 /// Read the given sets of shards, reconstruct the data if applicable, and return the encoded data
 pub fn read(
@@ -126,10 +126,14 @@ pub fn write(
     Ok(written)
 }
 
-pub fn update_ec_shards(shards: &mut [Vec<u8>], offset: usize, buf: &[u8]) -> Result<u8, ShmrError> {
+pub fn update_ec_shards(
+    shards: &mut [Vec<u8>],
+    offset: usize,
+    buf: &[u8],
+) -> Result<u8, ShmrError> {
     if buf.len() > shards[0].len() * shards.len() {
         warn!("Data is too large for all the shards");
-        return Err(ShmrError::OutOfSpace)
+        return Err(ShmrError::OutOfSpace);
     }
 
     let shard_len = shards[0].len();

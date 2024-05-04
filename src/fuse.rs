@@ -1,17 +1,20 @@
 use serde::{Deserialize, Serialize};
 
-use crate::file::{DEFAULT_CHUNK_SIZE, VirtualFile};
+use crate::file::{VirtualFile, DEFAULT_CHUNK_SIZE};
 use crate::fsdb::FsDB2;
-use crate::storage::{Engine};
-use fuser::{FileAttr, FileType, Filesystem, KernelConfig, ReplyAttr, ReplyDirectory, ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow, FUSE_ROOT_ID, ReplyData};
+use crate::storage::Engine;
+use crate::ShmrError;
+use fuser::{
+    FileAttr, FileType, Filesystem, KernelConfig, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry,
+    ReplyOpen, ReplyWrite, Request, TimeOrNow, FUSE_ROOT_ID,
+};
 use libc::c_int;
 use log::{debug, error, info, trace, warn};
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::os::unix::prelude::OsStrExt;
-use std::path::{PathBuf};
+use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use crate::ShmrError;
 
 const MAX_NAME_LENGTH: u32 = 255;
 
@@ -159,7 +162,7 @@ pub enum InodeDescriptor {
 pub struct Shmr {
     engine: Engine,
     inode_db: FsDB2<u64, Inode>,
-    descriptor_db: FsDB2<u64, InodeDescriptor>
+    descriptor_db: FsDB2<u64, InodeDescriptor>,
 }
 impl Shmr {
     pub fn open(path: PathBuf, engine: Engine) -> Result<Self, ShmrError> {
@@ -167,12 +170,17 @@ impl Shmr {
         Ok(Self {
             engine,
             inode_db: FsDB2::open(db_path.join("inode_db")).unwrap(),
-            descriptor_db: FsDB2::open(db_path.join("descriptor_db")).unwrap()
+            descriptor_db: FsDB2::open(db_path.join("descriptor_db")).unwrap(),
         })
     }
 
     fn check_access(&self, inode: u64, uid: u32, gid: u32, access_mask: i32) -> bool {
-        self.inode_db.has(&inode) && self.inode_db.get(&inode).unwrap().check_access(uid, gid, access_mask)
+        self.inode_db.has(&inode)
+            && self
+                .inode_db
+                .get(&inode)
+                .unwrap()
+                .check_access(uid, gid, access_mask)
     }
 
     fn create(
@@ -281,7 +289,7 @@ impl Shmr {
                 InodeDescriptor::Directory(entries) => {
                     entries.insert(name.as_bytes().to_vec(), ino);
                 }
-                _ => panic!()
+                _ => panic!(),
             }
         }
 
@@ -293,30 +301,36 @@ impl Filesystem for Shmr {
         if !self.inode_db.has(&FUSE_ROOT_ID) {
             info!("inode 0 does not exist, creating root node");
 
-            self.inode_db.insert(FUSE_ROOT_ID, Inode {
-                ino: FUSE_ROOT_ID,
-                size: 0,
-                blocks: 0,
-                atime: time_now(),
-                mtime: time_now(),
-                ctime: time_now(),
-                crtime: time_now(),
-                kind: IFileType::Directory,
-                perm: 0o777,
-                nlink: 2,
-                uid: 0,
-                gid: 0,
-                rdev: 0,
-                blksize: 0,
-                flags: 0,
-                xattrs: BTreeMap::new(),
-            });
+            self.inode_db.insert(
+                FUSE_ROOT_ID,
+                Inode {
+                    ino: FUSE_ROOT_ID,
+                    size: 0,
+                    blocks: 0,
+                    atime: time_now(),
+                    mtime: time_now(),
+                    ctime: time_now(),
+                    crtime: time_now(),
+                    kind: IFileType::Directory,
+                    perm: 0o777,
+                    nlink: 2,
+                    uid: 0,
+                    gid: 0,
+                    rdev: 0,
+                    blksize: 0,
+                    flags: 0,
+                    xattrs: BTreeMap::new(),
+                },
+            );
 
-            self.descriptor_db.insert(FUSE_ROOT_ID, InodeDescriptor::Directory({
-                let mut inner = BTreeMap::new();
-                inner.insert(b".".to_vec(), FUSE_ROOT_ID);
-                inner
-            }));
+            self.descriptor_db.insert(
+                FUSE_ROOT_ID,
+                InodeDescriptor::Directory({
+                    let mut inner = BTreeMap::new();
+                    inner.insert(b".".to_vec(), FUSE_ROOT_ID);
+                    inner
+                }),
+            );
 
             let _ = self.inode_db.flush_all();
             let _ = self.descriptor_db.flush_all();
@@ -349,7 +363,6 @@ impl Filesystem for Shmr {
         } else {
             panic!("parent inode is not a directory")
         }
-
     }
 
     fn getattr(&mut self, req: &Request<'_>, ino: u64, reply: ReplyAttr) {
@@ -383,7 +396,7 @@ impl Filesystem for Shmr {
                 reply.error(libc::ENOENT);
                 return;
             }
-            Some(inner) => inner
+            Some(inner) => inner,
         };
 
         if mode.is_some() {
@@ -528,7 +541,17 @@ impl Filesystem for Shmr {
     //     todo!()
     // }
 
-    fn read(&mut self, req: &Request<'_>, ino: u64, fh: u64, offset: i64, size: u32, _flags: i32, _lock_owner: Option<u64>, reply: ReplyData) {
+    fn read(
+        &mut self,
+        req: &Request<'_>,
+        ino: u64,
+        fh: u64,
+        offset: i64,
+        size: u32,
+        _flags: i32,
+        _lock_owner: Option<u64>,
+        reply: ReplyData,
+    ) {
         trace!(
             "FUSE({}) 'read' invoked on inode {} for fh {} starting at offset {}. read size: {}",
             req.unique(),
@@ -624,7 +647,6 @@ impl Filesystem for Shmr {
             return;
         }
 
-
         let mut descriptor = match self.descriptor_db.get_mut(&ino) {
             Some(descriptor) => descriptor,
             None => {
@@ -719,11 +741,11 @@ impl Filesystem for Shmr {
             for (index, entry) in contents.iter().skip(offset as usize).enumerate() {
                 let file_name = OsStr::from_bytes(entry.0);
                 trace!(
-                "FUSE({}) 'readdir' entry: {:?} -> {}",
-                req.unique(),
-                file_name,
-                entry.1
-            );
+                    "FUSE({}) 'readdir' entry: {:?} -> {}",
+                    req.unique(),
+                    file_name,
+                    entry.1
+                );
                 let buffer_full: bool = reply.add(
                     *entry.1,
                     offset + index as i64 + 1,
@@ -740,8 +762,5 @@ impl Filesystem for Shmr {
         } else {
             panic!("parent inode is not a directory")
         }
-
-
-
     }
 }
