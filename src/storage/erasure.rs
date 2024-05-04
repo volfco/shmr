@@ -1,4 +1,4 @@
-use crate::storage::{Engine, PoolMap};
+use crate::storage::{Engine};
 use crate::vpf::VirtualPathBuf;
 use log::{debug, error, trace, warn};
 use reed_solomon_erasure::galois_8::ReedSolomon;

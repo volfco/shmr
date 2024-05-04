@@ -2,7 +2,7 @@ use std::cmp;
 // Goal: Run this to read in a file, and then create a VirtualFile from it.
 //       Then step through moving it from a single buffer file, to one with multiple StorageBlocks.
 //       Then do some I/O operations on it.
-use crate::storage::{Engine, PoolMap, StorageBlock};
+use crate::storage::{Engine, StorageBlock};
 use anyhow::{Result};
 use log::trace;
 use serde::{Serialize, Deserialize};
@@ -60,7 +60,7 @@ impl VirtualFile {
     fn allocate_block(&mut self, engine: &Engine) -> Result<(), ShmrError> {
         // TODO Improve the logic when selecting which pool to select from
         let sb = StorageBlock::init_single(&engine.write_pool, &engine.pools)?;
-        sb.create(&engine)?;
+        sb.create(engine)?;
 
         // extend the chunk map
         let block_idx = self.blocks.len();

@@ -1,7 +1,5 @@
 use crate::storage::PoolMap;
-use log::{debug, error, trace};
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, Write};
+use log::{error, trace};
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use crate::ShmrError;
