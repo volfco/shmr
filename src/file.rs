@@ -2,7 +2,7 @@ use std::cmp;
 // Goal: Run this to read in a file, and then create a VirtualFile from it.
 //       Then step through moving it from a single buffer file, to one with multiple StorageBlocks.
 //       Then do some I/O operations on it.
-use crate::storage::{Engine, StorageBlock};
+use crate::storage::{IOEngine, StorageBlock};
 use crate::ShmrError;
 use anyhow::Result;
 use log::trace;
@@ -57,7 +57,7 @@ impl VirtualFile {
     }
 
     /// Allocate a new StorageBlock then extend the chunk map
-    fn allocate_block(&mut self, engine: &Engine) -> Result<(), ShmrError> {
+    fn allocate_block(&mut self, engine: &IOEngine) -> Result<(), ShmrError> {
         // TODO Improve the logic when selecting which pool to select from
         let sb = StorageBlock::init_single(&engine.write_pool, &engine.pools)?;
         sb.create(engine)?;
@@ -72,7 +72,7 @@ impl VirtualFile {
         Ok(())
     }
 
-    pub fn write(&mut self, engine: &Engine, pos: usize, buf: &[u8]) -> Result<usize, ShmrError> {
+    pub fn write(&mut self, engine: &IOEngine, pos: usize, buf: &[u8]) -> Result<usize, ShmrError> {
         let bf = buf.len();
         if bf == 0 {
             trace!("write request buf len == 0. nothing to do");
@@ -108,7 +108,7 @@ impl VirtualFile {
     }
 
     /// Read `size` bytes from VirtualFile, starting at the given offset, into the buffer.
-    pub fn read(&self, engine: &Engine, pos: usize, buf: &mut [u8]) -> Result<usize, ShmrError> {
+    pub fn read(&self, engine: &IOEngine, pos: usize, buf: &mut [u8]) -> Result<usize, ShmrError> {
         let bf = buf.len();
         if bf == 0 {
             trace!("write request buf len == 0. nothing to do");
@@ -149,12 +149,12 @@ impl VirtualFile {
 mod tests {
     use super::*;
     use crate::random_data;
-    use crate::storage::Engine;
+    use crate::storage::IOEngine;
     use crate::tests::get_pool;
 
     #[test]
     fn test_virtual_file_write_one_block() {
-        let engine: Engine = Engine::new("test_pool".to_string(), get_pool());
+        let engine: IOEngine = IOEngine::new("test_pool".to_string(), get_pool());
 
         let mut vf = crate::file::VirtualFile {
             size: 0,
@@ -178,7 +178,7 @@ mod tests {
 
     #[test]
     fn test_virtual_file_write_two_blocks() {
-        let engine: Engine = Engine::new("test_pool".to_string(), get_pool());
+        let engine: IOEngine = IOEngine::new("test_pool".to_string(), get_pool());
 
         let mut vf = VirtualFile::new();
 
@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     fn test_virtual_file_offset_read() {
-        let engine: Engine = Engine::new("test_pool".to_string(), get_pool());
+        let engine: IOEngine = IOEngine::new("test_pool".to_string(), get_pool());
 
         let mut vf = VirtualFile::new();
 
@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn test_virtual_file_two_block_offset_read() {
-        let engine: Engine = Engine::new("test_pool".to_string(), get_pool());
+        let engine: IOEngine = IOEngine::new("test_pool".to_string(), get_pool());
 
         let mut vf = VirtualFile::new();
 
@@ -232,7 +232,7 @@ mod tests {
     }
     #[test]
     fn test_virtual_file_write_size() {
-        let engine: Engine = Engine::new("test_pool".to_string(), get_pool());
+        let engine: IOEngine = IOEngine::new("test_pool".to_string(), get_pool());
 
         let mut vf = VirtualFile::new();
 
@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn test_virtual_file_write_lots_of_blocks_1() {
-        let engine: Engine = Engine::new("test_pool".to_string(), get_pool());
+        let engine: IOEngine = IOEngine::new("test_pool".to_string(), get_pool());
 
         let mut vf = VirtualFile::new();
 

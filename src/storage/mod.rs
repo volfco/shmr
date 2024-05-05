@@ -25,7 +25,7 @@ pub type PoolMap = HashMap<String, HashMap<String, PathBuf>>;
 /// TODO Rename Engine to something more appropriate
 /// TODO Implement some sort of background flush mechanism
 /// TODO Implement a LRU Cache for the handles
-pub struct Engine {
+pub struct IOEngine {
     /// Write Pool Name
     pub(crate) write_pool: String,
     /// Map of Pools
@@ -33,11 +33,11 @@ pub struct Engine {
     /// HashMap of VirtualPathBuf entries, and the associated File Handle
     handles: Arc<RwLock<BTreeMap<VirtualPathBuf, (Arc<Mutex<File>>, PathBuf)>>>,
 }
-impl Engine {
+impl IOEngine {
     // TODO Periodic flush, like FsDB2. <--
     // TODO Implement a LRU Cache for the handles
     pub fn new(write_pool: String, pools: PoolMap) -> Self {
-        Engine {
+        IOEngine {
             write_pool,
             pools,
             handles: Arc::new(RwLock::new(BTreeMap::new())),
@@ -246,7 +246,7 @@ impl StorageBlock {
     }
 
     /// Create the storage block, creating the necessary directories and files
-    pub fn create(&self, engine: &Engine) -> Result<(), ShmrError> {
+    pub fn create(&self, engine: &IOEngine) -> Result<(), ShmrError> {
         match self {
             StorageBlock::Single(_, path) => engine.create(path),
             StorageBlock::Mirror(_, copies) => {
@@ -265,7 +265,7 @@ impl StorageBlock {
     }
 
     /// Read the contents of the StorageBlock into the given buffer starting at the given offset
-    pub fn read(&self, engine: &Engine, offset: usize, buf: &mut [u8]) -> Result<usize, ShmrError> {
+    pub fn read(&self, engine: &IOEngine, offset: usize, buf: &mut [u8]) -> Result<usize, ShmrError> {
         if buf.is_empty() {
             // warn!("empty buffer passed to read function");
             return Ok(0);
@@ -310,7 +310,7 @@ impl StorageBlock {
     }
 
     /// Write the contents of the buffer to the StorageBlock at the given offset
-    pub fn write(&self, engine: &Engine, offset: usize, buf: &[u8]) -> Result<usize, ShmrError> {
+    pub fn write(&self, engine: &IOEngine, offset: usize, buf: &[u8]) -> Result<usize, ShmrError> {
         if buf.is_empty() {
             // warn!("empty buffer passed to read function");
             return Ok(0);
@@ -360,7 +360,7 @@ impl StorageBlock {
         }
     }
 
-    pub fn verify(&self, engine: &Engine) -> Result<bool, ShmrError> {
+    pub fn verify(&self, engine: &IOEngine) -> Result<bool, ShmrError> {
         match self {
             StorageBlock::Single(_, path) => Ok(path.exists(&engine.pools)),
             StorageBlock::Mirror(_, copies) => {
@@ -422,14 +422,12 @@ mod tests {
     use super::*;
     use crate::random_data;
     use crate::tests::get_pool;
-    // TODO Add tests for verifying the data
 
     #[test]
     fn test_single_storage_block() {
-        env_logger::builder().is_test(true).try_init().unwrap();
         let filename = random_string();
 
-        let engine: Engine = Engine::new("test_pool".to_string(), get_pool());
+        let engine: IOEngine = IOEngine::new("test_pool".to_string(), get_pool());
 
         let sb = StorageBlock::Single(
             DEFAULT_STORAGE_BLOCK_SIZE,
@@ -468,7 +466,7 @@ mod tests {
         let filename1 = random_string();
         let filename2 = random_string();
 
-        let engine: Engine = Engine::new("test_pool".to_string(), get_pool());
+        let engine: IOEngine = IOEngine::new("test_pool".to_string(), get_pool());
 
         let sb = StorageBlock::Mirror(
             DEFAULT_STORAGE_BLOCK_SIZE,
@@ -530,7 +528,7 @@ mod tests {
     fn test_init_ec() {
         let shard_size = 1024 * 1024 * 1; // 1MB
 
-        let engine: Engine = Engine::new("test_pool".to_string(), get_pool());
+        let engine: IOEngine = IOEngine::new("test_pool".to_string(), get_pool());
 
         let ec_block = StorageBlock::init_ec(&engine.write_pool, &engine.pools, (3, 2), shard_size);
         let valid = match ec_block {
@@ -558,7 +556,7 @@ mod tests {
     fn test_ec_storage_block() {
         let shard_size = 1024 * 1024 * 1; // 1MB
 
-        let engine: Engine = Engine::new("test_pool".to_string(), get_pool());
+        let engine: IOEngine = IOEngine::new("test_pool".to_string(), get_pool());
 
         let ec_block = StorageBlock::init_ec(&engine.write_pool, &engine.pools, (3, 2), shard_size);
 
@@ -585,7 +583,7 @@ mod tests {
     fn test_ec_block_write_on_disk_data() {
         let data = random_data((1024 * 1024 * 1) + (1024 * 512));
 
-        let engine: Engine = Engine::new("test_pool".to_string(), get_pool());
+        let engine: IOEngine = IOEngine::new("test_pool".to_string(), get_pool());
 
         let ec_block = StorageBlock::init_ec(&engine.write_pool, &engine.pools, (3, 2), data.len());
 

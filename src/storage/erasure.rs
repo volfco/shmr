@@ -1,4 +1,4 @@
-use crate::storage::Engine;
+use crate::storage::IOEngine;
 use crate::vpf::VirtualPathBuf;
 use crate::ShmrError;
 use log::{debug, error, trace, warn};
@@ -8,7 +8,7 @@ use std::time::Instant;
 /// Read the given sets of shards, reconstruct the data if applicable, and return the encoded data
 pub fn read(
     r: &ReedSolomon,
-    engine: &Engine,
+    engine: &IOEngine,
     shards: &[VirtualPathBuf],
     shard_size: usize,
 ) -> Result<Vec<u8>, ShmrError> {
@@ -57,7 +57,7 @@ pub fn read(
 }
 
 pub fn read_ec_shards(
-    engine: &Engine,
+    engine: &IOEngine,
     shards: &[VirtualPathBuf],
     shard_size: &usize,
 ) -> Vec<Option<Vec<u8>>> {
@@ -88,7 +88,7 @@ pub fn read_ec_shards(
 /// is generated automatically
 pub fn write(
     r: &ReedSolomon,
-    engine: &Engine,
+    engine: &IOEngine,
     shards: &[VirtualPathBuf],
     shard_size: usize,
     buf: Vec<u8>,

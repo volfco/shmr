@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::file::{VirtualFile, DEFAULT_CHUNK_SIZE};
 use crate::fsdb::FsDB2;
-use crate::storage::Engine;
+use crate::storage::IOEngine;
 use crate::ShmrError;
 use fuser::{
     FileAttr, FileType, Filesystem, KernelConfig, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry,
@@ -160,12 +160,12 @@ pub enum InodeDescriptor {
     Symlink,
 }
 pub struct Shmr {
-    engine: Engine,
+    engine: IOEngine,
     inode_db: FsDB2<u64, Inode>,
     descriptor_db: FsDB2<u64, InodeDescriptor>,
 }
 impl Shmr {
-    pub fn open(path: PathBuf, engine: Engine) -> Result<Self, ShmrError> {
+    pub fn open(path: PathBuf, engine: IOEngine) -> Result<Self, ShmrError> {
         let db_path = path.join("shmr");
         Ok(Self {
             engine,

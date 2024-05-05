@@ -50,7 +50,7 @@ fn hash_file(path: &PathBuf) -> Result<u64> {
 mod tests {
     use super::*;
     use crate::random_string;
-    use crate::storage::Engine;
+    use crate::storage::IOEngine;
     use crate::tests::get_pool;
 
     #[test]
@@ -58,7 +58,7 @@ mod tests {
         let filename1 = random_string();
         let filename2 = random_string();
 
-        let engine: Engine = Engine::new("test_pool".to_string(), get_pool());
+        let engine: IOEngine = IOEngine::new("test_pool".to_string(), get_pool());
 
         let paths = vec![
             VirtualPathBuf {
@@ -90,7 +90,7 @@ mod tests {
         let filename1 = random_string();
         let filename2 = random_string();
 
-        let engine: Engine = Engine::new("test_pool".to_string(), get_pool());
+        let engine: IOEngine = IOEngine::new("test_pool".to_string(), get_pool());
 
         let paths = vec![
             VirtualPathBuf {

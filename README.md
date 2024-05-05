@@ -1,43 +1,40 @@
 A Purpose Built filesystem for use with SMR Hard Drives. 
 
+Unlike a traditional file system, Shmr acts as a Virtual Filesystem on top of a standard file system. Shmr stores files 
+as a series of fixed size blocks, and uses an internal key/value store to map the blocks to the underlying storage. 
 
+This enables 'RAID'* like functionality to be implemented at the filesystem level, which makes it a lot easier to deal 
+with the complexities of using SMR drives in RAID arrays.
 
+Shmr is designed to act as a tiered filesystem, which requires a high speed, non-volitile, storage pool to act as the
+write. Initially, all I/O operations are directed at the write pool. Then in the background, the data is moved to the
+slower drives. 
 
+As of `v0.1.0`, Shmr is designed for the following workload:
+- Read Often, Write Rarely
+- Large Files
+- Sequential Access
+- A Single SSD Filesystem, that is backed by a ZFS zpool in a RAIDZ2 configuration, is used as the write pool
+- An Archive pool made up of XFS formatted SMR drives mounted individually (so /mnt/smr0, /mnt/smr1, etc)
 
-## references
-- https://github.com/wfraser/fuse-mt/
-- https://github.com/carlosgaldino/gotenksfs
+## Features
+- Support for mixed size drives in a storage pool. You can combine 1TB drives with 10TB drives in the same pool without issues. 
+- Policy Engine to enable programmatic control over the tiring of data; down to the individual file level. Files on different tiers can exist in the same directory. 
+- Fine grain throttling of the background processes, so SMR drives don't get overwhelmed. 
+- Up to 300MB/s write speed. Could be faster, but fuser isn't multi-threaded... yet. 
 
+## on disk format
+There is no modification of the data stored on the filesystem. The original file can be reconstructed by cat-ing the blocks
+together in the correct order. 
 
-## assumptions
-- we are dealing with largely read heavy workload on medium to large sized files
-- xfs is the filesystem used for data storage
-- the workspace directory is assumed to be a high speed, non-volitile, xfs filesystem
-  - xfs here because we might be making a lot of files to buffer data, and for consistency
+For Erasure-Encoded files, the blocks are made up of shards. The shard's filename identifies the kind of shard, and the
+order of the shard in the block. If the configuration is (3,2), the first 3 shards are the data shards. These can be
+cat-ed together in order to form the original block. The parity shards can be used to recover up to two other data 
+shards, but you will need a special utility for this. 
 
-## thingies
-- If the block size does not divide evenly into the required number of data shards, the end of the last data shard is zero filled
-- 
+NOTE: There might be a few bytes of padding in the last data shard. You need to know the default block size. 
+` (length as f32 / data_shards as f32).ceil() as usize`
 
-## sled keyspace
-```plaintext
-shmr_0..n      inode file attributes
-shmr_0..n_ds   FileDescriptor or DirectoryDescriptor, based on inode file attributes
+```rust
+// TODO Implement the shard identification by filename
 ```
-
-## subsystems
-### StorageBlockDB
-A key/value store that stores information about individual storage blocks, and the underlying location of the data on disk.
-
-### Superblock
-A key/value store that acts more like a filesystem superblock, storing information about the filesystem as a whole. 
-
-A superblock entry is basically [u64: (Inode, InodeDescriptor)], where Inode contains the traditional filesystem 
-information, where InodeTopology contains the list of StorageBlocks that map to the actual data that makes up the inode.
-
-
-## thoughts
-- when data is first written, it is written to a single buffer file. SOMETHING HAPPENS and the rules are evaluated to 
-  figure out how the data is to be stored. This is where the shard size is determined (if applicable).
-- The logic for deciding where writes should go is handled at the Fuse layer. VirtualFile doesn't need to think about
-  how to select where to write the data, just select from the given pool. 
