@@ -22,6 +22,7 @@ const FLUSH_INTERVAL: u64 = 500; // in ms
 
 /// Basic In-memory database with persistence.
 ///
+/// BonsaiDB looks like a viable alternative to this.
 #[derive(Clone)]
 pub struct FsDB2<
     K: Serialize + DeserializeOwned + Eq + Hash + Clone + Send + Sync + Debug + 'static,
@@ -113,7 +114,10 @@ impl<
         Ok(())
     }
     pub fn gen_id(&self) -> Result<u64, ShmrError> {
-        Ok(self.db.generate_id().unwrap())
+        // when sled opens a database for the first time, the counter starts at zero. The next time
+        // it opens, the counter starts at 2000000.
+        // guess how I found this out.
+        Ok(self.db.generate_id().unwrap() + 2)
     }
     pub fn get(&self, ident: &K) -> Option<ReadGuard<K, V>> {
         match self.entries.get(ident) {
@@ -174,7 +178,6 @@ impl<
         let mut handle = self.dirties.write().unwrap();
 
         if handle.is_empty() {
-            trace!("no tainted entries to flush");
             return Ok(());
         }
 

@@ -40,7 +40,9 @@ fn main() {
     };
     env_logger::builder()
         .format_timestamp_nanos()
-        .filter_level(log_level)
+        .filter(Some("shmr"), log_level)
+        .filter(Some("fuser"), log_level)
+        // .filter_level(log_level)
         .init();
 
     // load config file

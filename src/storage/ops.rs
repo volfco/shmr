@@ -1,7 +1,5 @@
-use crate::storage::{PoolMap, StorageBlock};
-use crate::ShmrError;
-use anyhow::Result;
-use log::debug;
+// use crate::storage::{PoolMap, StorageBlock};
+// use crate::ShmrError;
 
 // /// Replaces the given StorageBlock with one that is Erasure Encoded.
 // pub fn replace_with_ec(

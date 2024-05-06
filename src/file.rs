@@ -23,7 +23,9 @@ pub trait StoragePoolMap {
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct VirtualFile {
+    /// File Size, in bytes
     pub size: usize,
+    /// Chunk Size, in bytes. This is the "block size" for the file
     pub chunk_size: usize,
     /// Chunk Map, mapping each chunk of the file to it's underlying StorageBlock
     chunk_map: Vec<(usize, usize)>,

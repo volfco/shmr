@@ -343,6 +343,7 @@ impl StorageBlock {
                 size,
                 ..
             } => {
+                // TODO We need a way to keep the shard in memory
                 if offset > *size {
                     return Err(ShmrError::OutOfSpace);
                 }

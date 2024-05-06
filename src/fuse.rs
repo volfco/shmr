@@ -4,10 +4,7 @@ use crate::file::{VirtualFile, DEFAULT_CHUNK_SIZE};
 use crate::fsdb::FsDB2;
 use crate::storage::IOEngine;
 use crate::ShmrError;
-use fuser::{
-    FileAttr, FileType, Filesystem, KernelConfig, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry,
-    ReplyOpen, ReplyWrite, Request, TimeOrNow, FUSE_ROOT_ID,
-};
+use fuser::{FileAttr, FileType, Filesystem, KernelConfig, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow, FUSE_ROOT_ID};
 use libc::c_int;
 use log::{debug, error, info, trace, warn};
 use std::collections::BTreeMap;
@@ -293,13 +290,16 @@ impl Shmr {
             }
         }
 
+        self.inode_db.flush_all().unwrap();
+        self.descriptor_db.flush_all().unwrap();
+
         Ok(ino)
     }
 }
 impl Filesystem for Shmr {
     fn init(&mut self, _req: &Request<'_>, _config: &mut KernelConfig) -> Result<(), c_int> {
         if !self.inode_db.has(&FUSE_ROOT_ID) {
-            info!("inode 0 does not exist, creating root node");
+            info!("inode {} does not exist, creating root node", FUSE_ROOT_ID);
 
             self.inode_db.insert(
                 FUSE_ROOT_ID,
@@ -340,6 +340,12 @@ impl Filesystem for Shmr {
 
     /// Look up a directory entry by name and get its attributes.
     fn lookup(&mut self, req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
+        trace!(
+            "FUSE({}) 'lookup' invoked for parent {} with name {:?}",
+            req.unique(),
+            parent,
+            name
+        );
         if name.len() > MAX_NAME_LENGTH as usize {
             reply.error(libc::ENAMETOOLONG);
             return;
@@ -353,12 +359,18 @@ impl Filesystem for Shmr {
 
         let descriptor = self.descriptor_db.get(&parent).unwrap();
         if let InodeDescriptor::Directory(contents) = &*descriptor {
+            warn!("mark");
             match contents.get(name.as_bytes()) {
                 Some(entry_inode) => {
                     let inode = self.inode_db.get(entry_inode).unwrap();
+                    warn!("file attributes: {:?}", &inode.to_fileattr());
+
                     reply.entry(&Duration::new(0, 0), &inode.to_fileattr(), 0)
                 }
-                None => reply.error(libc::ENOENT),
+                None => {
+                    println!("lookup mark2");
+                    reply.error(libc::ENOENT)
+                },
             }
         } else {
             panic!("parent inode is not a directory")
@@ -492,7 +504,7 @@ impl Filesystem for Shmr {
     // This is called for creation of all non-directory, non-symlink nodes. If the filesystem defines a create() method, then for regular files that will be called instead.
     fn mknod(
         &mut self,
-        _req: &Request<'_>,
+        req: &Request<'_>,
         parent: u64,
         name: &OsStr,
         mode: u32,
@@ -500,7 +512,13 @@ impl Filesystem for Shmr {
         rdev: u32,
         reply: ReplyEntry,
     ) {
-        match self.create(_req, parent, name, mode, umask, rdev) {
+        trace!(
+            "FUSE({}) 'mknod' invoked for parent {} with name {:?}",
+            req.unique(),
+            parent,
+            name
+        );
+        match self.create(req, parent, name, mode, umask, rdev) {
             Ok(inode) => {
                 let inode = self.inode_db.get(&inode).unwrap().clone();
                 reply.entry(&Duration::new(0, 0), &inode.to_fileattr(), 0);
@@ -520,6 +538,11 @@ impl Filesystem for Shmr {
         umask: u32,
         reply: ReplyEntry,
     ) {
+        trace!(
+            "FUSE({}) 'mkdir' invoked for parent {} with name {:?}",
+            req.unique(),
+            parent,
+            name);
         match self.create(req, parent, name, mode | libc::S_IFDIR, umask, 0) {
             Ok(inode) => {
                 let inode = self.inode_db.get(&inode).unwrap().clone();
@@ -762,5 +785,140 @@ impl Filesystem for Shmr {
         } else {
             panic!("parent inode is not a directory")
         }
+    }
+
+    fn rename(&mut self, req: &Request<'_>, parent: u64, name: &OsStr, newparent: u64, newname: &OsStr, _flags: u32, reply: ReplyEmpty) {
+        trace!("FUSE({}) 'rename' invoked for parent {} with name {:?} to new parent {} with new name {:?}", req.unique(), parent, name, newparent, newname);
+
+        // TODO Clean this up
+        if newparent == parent {
+            let mut parent_inode = match self.inode_db.get_mut(&parent) {
+                Some(inode) => inode,
+                None => {
+                    reply.error(libc::ENOENT);
+                    return;
+                }
+            };
+            if !parent_inode.check_access(req.uid(), req.gid(), libc::W_OK) {
+                reply.error(libc::EACCES);
+                return;
+            }
+
+
+            if let Some(mut descriptor) = self.descriptor_db.get_mut(&parent) {
+                if let InodeDescriptor::Directory(contents) = &mut *descriptor {
+                    // make sure the new name doesn't already exist
+                    if contents.contains_key(newname.as_bytes()) {
+                        warn!("attempted to rename file to a name that already exists");
+                        reply.error(libc::EEXIST);
+                        return;
+                    }
+
+                    let inode = contents.remove(name.as_bytes());
+                    if inode.is_none() {
+                        warn!("attempted to rename a non-existent file");
+                        reply.error(libc::ENOENT);
+                        return;
+                    }
+
+                    contents.insert(newname.as_bytes().to_vec(), inode.unwrap());
+                }
+            }
+
+            parent_inode.ctime = time_now();
+
+        } else {
+
+            let mut parent_inode = match self.inode_db.get(&parent) {
+                Some(inode) => inode,
+                None => {
+                    reply.error(libc::ENOENT);
+                    return;
+                }
+            };
+            if !parent_inode.check_access(req.uid(), req.gid(), libc::W_OK) {
+                reply.error(libc::EACCES);
+                return;
+            }
+            let new_parent_inode = match self.inode_db.get(&newparent) {
+                Some(inode) => inode,
+                None => {
+                    warn!("attempted to move file to a non-existent inode");
+                    reply.error(libc::ENOTDIR);
+                    return;
+                }
+            };
+
+            if parent_inode.kind != IFileType::Directory || new_parent_inode.kind != IFileType::Directory {
+                warn!("attempted to move file to a non-directory inode");
+                reply.error(libc::ENOTDIR);
+                return;
+            }
+
+            // drop the handles for now.
+            drop(parent_inode);
+            drop(new_parent_inode);
+
+            let mut parent_descriptor = match self.descriptor_db.get_mut(&parent) {
+                Some(descriptor) => descriptor,
+                None => {
+                    error!("parent inode {} does not have a descriptor", parent);
+                    reply.error(libc::ENOENT);
+                    return;
+                }
+            };
+            let mut new_parent_descriptor = match self.descriptor_db.get_mut(&newparent) {
+                Some(descriptor) => descriptor,
+                None => {
+                    error!("new parent inode {} does not have a descriptor", newparent);
+                    reply.error(libc::ENOENT);
+                    return;
+                }
+            };
+            // let's make sure that the thing we're moving out actually exists
+            let target_inode = if let InodeDescriptor::Directory(contents) = &*parent_descriptor {
+                match contents.get(name.as_bytes()) {
+                    Some(inode) => *inode,
+                    // we already know this entry exists
+                    None =>  panic!("at the disco")
+                }
+            } else { panic!("at the disco"); };
+
+            if let InodeDescriptor::Directory(contents) = &*new_parent_descriptor {
+                if contents.contains_key(newname.as_bytes()) {
+                    warn!("attempted to move file to a directory that already has a file with the same name");
+                    reply.error(libc::EEXIST);
+                    return;
+                }
+            }
+
+            // remove the entry from the parent directory
+            if let InodeDescriptor::Directory(contents) = &mut *parent_descriptor {
+                let _ = contents.remove(name.as_bytes());
+            }
+            // add the entry to the new parent directory with the new name
+            if let InodeDescriptor::Directory(contents) = &mut *new_parent_descriptor {
+                let _ = contents.insert(newname.as_bytes().to_vec(), target_inode);
+            }
+
+            drop(parent_descriptor);
+            drop(new_parent_descriptor);
+
+            // now update the metadata of both parent inodes
+            {
+                let mut parent_inode = self.inode_db.get_mut(&parent).unwrap();
+                let mut new_parent_inode = self.inode_db.get_mut(&newparent).unwrap();
+                parent_inode.nlink -= 1;
+                parent_inode.mtime = time_now();
+                parent_inode.ctime = time_now();
+                new_parent_inode.nlink += 1;
+                new_parent_inode.mtime = time_now();
+                new_parent_inode.ctime = time_now();
+            }
+        }
+
+
+        reply.ok();
+
     }
 }
