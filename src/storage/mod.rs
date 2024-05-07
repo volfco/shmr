@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex, RwLock};
 pub mod erasure;
 mod hash;
 pub mod ops;
+mod block;
 
 const DEFAULT_STORAGE_BLOCK_SIZE: usize = 1024 * 1024 * 1; // 1MB
 pub type PoolMap = HashMap<String, HashMap<String, PathBuf>>;
@@ -149,6 +150,7 @@ impl IOEngine {
         Ok(written)
     }
 }
+
 
 /// Represent a Single StorageBlock, the basic component of a VirtualFile.
 ///

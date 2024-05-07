@@ -27,7 +27,9 @@ pub struct VirtualFile {
     pub size: usize,
     /// Chunk Size, in bytes. This is the "block size" for the file
     pub chunk_size: usize,
-    /// Chunk Map, mapping each chunk of the file to it's underlying StorageBlock
+    /// Chunk Map, mapping each chunk of the file to it's underlying StorageBlock. Vec index is the
+    /// chunk number
+    /// [chunk index] => (Storage Block, Offset)
     chunk_map: Vec<(usize, usize)>,
 
     /// List of StorageBlocks, in order, that make up the file

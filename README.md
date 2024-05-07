@@ -38,3 +38,22 @@ NOTE: There might be a few bytes of padding in the last data shard. You need to 
 ```rust
 // TODO Implement the shard identification by filename
 ```
+
+## metadata disk format
+`sled` is used to store the metadata. All you need to know is that it is an embedded key-value store. 
+
+### inode db
+### descriptor db
+This database is used to store the contents of the inode; represented as the [`fuse::InodeDescriptor`] enum. 
+
+#### [`fuse::InodeDescriptor::Directory`]
+For Directories, the contents are stored as a `BTreeMap<FileName, Inode>`. 
+
+#### [`fuse::InodeDescriptor::File`]
+Files are represented as by [`file::VirtualFile`]. This Struct contains the File Size, Chunk Size, Chunk Map, and Block Map.
+
+
+
+
+## unfinished thoughts
+
