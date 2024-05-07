@@ -119,6 +119,8 @@ impl<
         // guess how I found this out.
         Ok(self.db.generate_id().unwrap() + 2)
     }
+
+    /// Return a read-only copy of the Record
     pub fn get(&self, ident: &K) -> Option<ReadGuard<K, V>> {
         match self.entries.get(ident) {
             Some(entry) => Some(entry),
@@ -136,6 +138,8 @@ impl<
             }
         }
     }
+
+    /// Return a writeable reference to the entry
     pub fn get_mut(&self, ident: &K) -> Option<WriteGuard<K, V>> {
         // taint the entry, so we flush it to disk when we can
         let mut marker = self.dirties.write().unwrap();
@@ -144,9 +148,13 @@ impl<
 
         self.entries.get_mut(ident)
     }
+
+    /// Is there an entry for the given key
     pub fn has(&self, ident: &K) -> bool {
         self.entries.contains_key(ident)
     }
+
+    /// Insert an entry
     pub fn insert(&self, ident: K, value: V) {
         let mut marker = self.dirties.write().unwrap();
         marker.push(ident.clone());
@@ -155,6 +163,7 @@ impl<
         drop(marker);
     }
 
+    /// Serialize & Flush the given entry to the underlying database, and then flush the database
     pub fn flush(&self, ident: &K) -> Result<(), ShmrError> {
         if let Some(inner) = self.entries.get(ident) {
             let raw_id = bincode::serialize(&ident).unwrap();
@@ -173,6 +182,8 @@ impl<
 
         Ok(())
     }
+
+    /// Serialize & Flush all entries to the underlying database, and then flush the database
     pub fn flush_all(&self) -> Result<(), ShmrError> {
         // lock the dirty list, and hold it until we're done
         let mut handle = self.dirties.write().unwrap();
