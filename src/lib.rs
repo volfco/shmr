@@ -5,6 +5,7 @@ pub mod fsdb;
 pub mod fuse;
 pub mod storage;
 pub mod vpf;
+mod engine;
 
 #[derive(Debug)]
 pub enum ShmrError {

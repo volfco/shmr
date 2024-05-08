@@ -4,6 +4,7 @@ use clap::Parser;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use shmr::fsdb::FsDB2;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -33,21 +34,21 @@ struct FuseConfig {
 
 fn main() {
     env_logger::init();
-    //
-    // let args = Args::parse();
-    //
-    // // load config file
-    // let config = std::fs::read_to_string(&args.config).expect("could not read config file");
-    // let config: FuseConfig = serde_yaml::from_str(&config).expect("could not parse config file");
-    //
-    // // let parts = args.topology.split(",").collect::<Vec<String>>();
-    //
-    // let fs_db = FsDB::open(config.metadata_dir).unwrap();
-    //
-    // let pool_map = (config.pools.clone(), config.write_pool.clone());
-    // let mut inode_descriptor = fs_db.read_descriptor(args.inode).unwrap();
-    //
-    // let mut to_delete = vec![];
+
+    let args = Args::parse();
+
+    // load config file
+    let config = std::fs::read_to_string(&args.config).expect("could not read config file");
+    let config: FuseConfig = serde_yaml::from_str(&config).expect("could not parse config file");
+
+    // let parts = args.topology.split(",").collect::<Vec<String>>();
+
+    let fs_db = FsDB2::open(config.metadata_dir).unwrap();
+
+    let pool_map = (config.pools.clone(), config.write_pool.clone());
+    let mut inode_descriptor = fs_db.read_descriptor(args.inode).unwrap();
+
+    let mut to_delete = vec![];
     //
     // match inode_descriptor {
     //   InodeDescriptor::File(ref mut vf) => {

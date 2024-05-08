@@ -2,7 +2,7 @@ use std::cmp;
 // Goal: Run this to read in a file, and then create a VirtualFile from it.
 //       Then step through moving it from a single buffer file, to one with multiple StorageBlocks.
 //       Then do some I/O operations on it.
-use crate::storage::{IOEngine, StorageBlock};
+use crate::storage::{IOEngine, block::StorageBlock};
 use crate::ShmrError;
 use anyhow::Result;
 use log::trace;

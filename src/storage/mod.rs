@@ -1,17 +1,21 @@
 use crate::vpf::VirtualPathBuf;
 use crate::ShmrError;
-use log::{debug, trace, warn};
-use serde::{Deserialize, Serialize};
+use log::{debug, trace};
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
+use std::thread::JoinHandle;
 
 pub mod erasure;
 pub mod hash;
 pub mod ops;
 pub mod buffer;
+pub mod block;
+
+
+const DEFAULT_STORAGE_BLOCK_SIZE: usize = 1024 * 1024 * 1; // 1MB
 
 pub type PoolMap = HashMap<String, HashMap<String, PathBuf>>;
 
@@ -155,13 +159,13 @@ impl IOEngine {
     }
 
     pub fn flush(&self, vpb: &VirtualPathBuf) -> Result<(), ShmrError> {
-        let handle = self.handles.read()?;
+        let handle = self.handles.read().unwrap();
         let fhl = handle.get(vpb);
 
         let fhl = fhl.unwrap();
 
-        let mut inner_handle = fhl.0.lock()?;
-        *inner_handle.flush()?;
+        let mut inner_handle = fhl.0.lock().unwrap();
+        inner_handle.flush()?;
 
         Ok(())
     }

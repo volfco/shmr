@@ -596,7 +596,7 @@ impl Filesystem for Shmr {
 
         } else {
 
-            let mut parent_inode = match self.inode_db.get(&parent) {
+            let parent_inode = match self.inode_db.get(&parent) {
                 Some(inode) => inode,
                 None => {
                     reply.error(libc::ENOENT);

@@ -5,9 +5,7 @@ use rand::Rng;
 use reed_solomon_erasure::galois_8::ReedSolomon;
 use serde::{Deserialize, Serialize};
 use std::cmp;
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, Write};
-use std::path::PathBuf;
+use crate::storage::{DEFAULT_STORAGE_BLOCK_SIZE, erasure, hash, IOEngine, PoolMap};
 
 /// Represent a Single StorageBlock, the basic component of a VirtualFile.
 ///

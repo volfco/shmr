@@ -272,7 +272,7 @@ mod tests {
 
         if db_path.exists() {
             warn!("removing existing database");
-            std::fs::remove_dir_all(&db_path);
+            let _ = std::fs::remove_dir_all(&db_path);
         }
 
         {
@@ -309,7 +309,7 @@ mod tests {
 
         if db_path.exists() {
             warn!("removing existing database");
-            std::fs::remove_dir_all(&db_path);
+            let _ = std::fs::remove_dir_all(&db_path);
         }
 
         {
@@ -346,7 +346,7 @@ mod tests {
 
         if db_path.exists() {
             warn!("removing existing database");
-            std::fs::remove_dir_all(&db_path);
+            let _ = std::fs::remove_dir_all(&db_path);
         }
 
         {

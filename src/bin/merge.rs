@@ -1,5 +1,4 @@
 use std::cmp;
-use std::collections::VecDeque;
 
 #[derive(Debug)]
 struct StorageBlock {
@@ -30,25 +29,19 @@ impl StorageBlock {
 }
 
 fn write_into(buf: &mut [u8], writes: &mut Vec<(usize, Vec<u8>)>, offset: usize) {
-  for (start, contents) in writes {
-    let bf = buf.len();
-    let content_start = cmp::min(offset as i32 - *start as i32, 0);
-    let content_end = cmp::min(contents.len() as i32, buf.len() as i32 - *start as i32) as usize;
-    let content_start = content_start as usize;
-    let start = *start;
-
-    eprintln!("  buf[{}..{}] = content[{}..{}]", start, cmp::min(start+content_end, bf), content_start, content_end);
-    buf[start..cmp::min(start+content_end, bf)].copy_from_slice(&contents[content_start..content_end])
-
-  }
+  let write_buf_len = buf.len();
+  writes.iter()
+    .filter(|(start, contents)| offset <= start + contents.len())
+    .for_each(|(start, contents)| {
+      let content_start = offset.saturating_sub(*start);
+      let content_end = cmp::min(contents.len(), write_buf_len);
+      let buf_start = start.saturating_sub(offset);
+      let buf_end = buf_start + content_end - content_start;
+      buf[buf_start..buf_end].copy_from_slice(&contents[content_start..content_end]);
+    });
 }
 
 fn main() {
-
-  let mut block = StorageBlock {
-    contents: vec![0; 32],
-    io_buf: Vec::new(),
-  };
 
 }
 

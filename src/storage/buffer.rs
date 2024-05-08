@@ -1,13 +1,10 @@
 use std::{cmp, thread};
-use std::collections::BTreeMap;
-use std::fs::File;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::Duration;
-use log::{debug, trace};
+use log::{debug};
 use crate::ShmrError;
-use crate::storage::{IOEngine, StorageBlock};
-use crate::vpf::VirtualPathBuf;
+use crate::storage::{IOEngine, block::StorageBlock};
 
 const FLUSH_INTERVAL: u64 = 500; // in ms
 
@@ -34,7 +31,7 @@ struct StorageBlockBuffer {
   worker_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 impl StorageBlockBuffer {
-  pub fn new(block: StorageBlock, buffer: bool) {
+  pub fn new(block: StorageBlock, buffer: bool) -> Self {
     let s = Self {
       topology: block,
       buffered: buffer,
@@ -59,14 +56,14 @@ impl StorageBlockBuffer {
 
             {
                 // this will lock the io_buf, which will prevent new writes from being accepted until this finishes
-                thread_self.flush_buffer();
+                // thread_self.flush_buffer();
             }
         }
         debug!("bg_thread has exited");
     });
 
     {
-        let mut flush_lock = s.flusher.lock().unwrap();
+        let mut flush_lock = s.worker_handle.lock().unwrap();
         *flush_lock = Some(thread_handle);
     }
 
@@ -100,7 +97,7 @@ impl StorageBlockBuffer {
   fn flush_buffer(&self, engine: &IOEngine) -> Result<(), ShmrError> {
     let mut handle = self.io_buf.lock().unwrap();
 
-    let mut buf: Vec<u8> = vec![MaybeUninit::uninit(); self.topology.size()];
+    let mut buf: Vec<u8> = vec![0; self.topology.size()];
     // read the on-disk contents into the buffer
     self.topology.read(engine, 0, buf.as_mut_slice())?;
 
@@ -114,7 +111,7 @@ impl StorageBlockBuffer {
 
 }
 
-fn write_into(buf: &mut [u8], writes: &mut Vec<(usize, Vec<u8>)>, offset: usize) {
+fn write_into(buf: &mut [u8], writes: &mut [(usize, Vec<u8>)], offset: usize) {
   let write_buf_len = buf.len();
   writes.iter()
       .filter(|(start, contents)| offset <= start + contents.len())
@@ -125,4 +122,76 @@ fn write_into(buf: &mut [u8], writes: &mut Vec<(usize, Vec<u8>)>, offset: usize)
           let buf_end = buf_start + content_end - content_start;
           buf[buf_start..buf_end].copy_from_slice(&contents[content_start..content_end]);
       });
+}
+
+#[cfg(test)]
+mod tests {
+  use crate::random_string;
+  use crate::storage::block::StorageBlock;
+  use crate::storage::buffer::StorageBlockBuffer;
+  use crate::storage::{DEFAULT_STORAGE_BLOCK_SIZE, IOEngine};
+  use crate::tests::get_pool;
+  use crate::vpf::VirtualPathBuf;
+
+  #[test]
+  fn test1() {
+    let filename = random_string();
+    let io_engine: IOEngine = IOEngine::new("test_pool".to_string(), get_pool());
+
+    let storage_block = StorageBlock::Single(
+      DEFAULT_STORAGE_BLOCK_SIZE,
+      VirtualPathBuf {
+        pool: "test_pool".to_string(),
+        bucket: "bucket1".to_string(),
+        filename,
+      },
+    );
+    storage_block.create(&io_engine).unwrap();
+    let data_to_write = vec![0u8, 1, 2, 3, 4, 5];
+
+
+    // Writing some data to the storage_block
+    let _ = storage_block
+      .write(&io_engine, 0, &data_to_write)
+      .expect("Failed to write to the storage block");
+
+    // Creating a storage block buffer with buffering enabled
+    let mut storage_block_buffer = StorageBlockBuffer::new(storage_block, true);
+
+    // Making a few buffered writes
+    let buffered_write_data1 = vec![5u8, 6, 7, 8];
+    let _ = storage_block_buffer
+      .write(&io_engine, data_to_write.len(), &buffered_write_data1)
+      .expect("Failed to write to the storage block buffer");
+
+    let buffered_write_data2 = vec![9u8, 10, 11];
+    let _ = storage_block_buffer
+      .write(&io_engine, data_to_write.len() + buffered_write_data1.len(), &buffered_write_data2)
+      .expect("Failed to write to the storage block buffer");
+
+    // Examine the Buffer to make sure there are two entries at the correct starting point
+
+    // Reading the data
+    let mut read_buffer = vec![0u8; data_to_write.len() + buffered_write_data1.len() + buffered_write_data2.len()];
+    let _ = storage_block_buffer
+      .read(&io_engine, 0, &mut read_buffer)
+      .expect("Failed to read from the storage block buffer");
+
+    assert_eq!(read_buffer, vec![0u8, 1, 2, 3, 4, 5, 5, 6, 7, 8, 9, 10, 11]); // Verifying the read data is as expected
+
+    //Flushing the buffer
+    let _ = storage_block_buffer
+      .flush_buffer(&io_engine)
+      .expect("Failed to flush the storage block buffer");
+
+    //Reading the file on disk to verify the contents
+    let mut read_buffer2 = vec![0u8; data_to_write.len() + buffered_write_data1.len() + buffered_write_data2.len()];
+    let _ = storage_block_buffer
+      .read(&io_engine, 0, &mut read_buffer2)
+      .expect("Failed to read from the storage block buffer after flush");
+
+    assert_eq!(read_buffer2, vec![0u8, 1, 2, 3, 4, 5, 5, 6, 7, 8, 9, 10, 11]); // Verifying the read data is as expected
+}
+
+
 }
