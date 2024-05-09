@@ -35,8 +35,10 @@ shards, but you will need a special utility for this.
 NOTE: There might be a few bytes of padding in the last data shard. You need to know the default block size. 
 ` (length as f32 / data_shards as f32).ceil() as usize`
 
-```rust
-// TODO Implement the shard identification by filename
+```text
+Single: {uuid}_single.bin
+Mirror: {uuid}_mirror_{shard number}_{total shards}.bin
+Ec: {uuid}_ec_{data}_{parity}_{d or p}{shard number}.bin
 ```
 
 ## metadata disk format

@@ -1,11 +1,11 @@
 use rand::Rng;
 use std::io::Error;
+mod engine;
 pub mod file;
 pub mod fsdb;
 pub mod fuse;
 pub mod storage;
 pub mod vpf;
-mod engine;
 
 #[derive(Debug)]
 pub enum ShmrError {
@@ -41,7 +41,7 @@ pub fn random_data(size: usize) -> Vec<u8> {
 
 #[cfg(test)]
 pub mod tests {
-    use crate::storage::PoolMap;
+    use crate::storage::{build_poolmap, PoolMap};
     use std::collections::HashMap;
     use std::path::PathBuf;
 
@@ -53,10 +53,10 @@ pub mod tests {
         let mut buckets = HashMap::new();
         buckets.insert("bucket1".to_string(), PathBuf::from("/tmp"));
 
-        let mut pool_map: PoolMap = HashMap::new();
+        let mut pool_map = HashMap::new();
         pool_map.insert("test_pool".to_string(), buckets);
 
-        pool_map
+        build_poolmap(pool_map)
     }
 }
 

@@ -4,7 +4,10 @@ use crate::file::{VirtualFile, DEFAULT_CHUNK_SIZE};
 use crate::fsdb::FsDB2;
 use crate::storage::IOEngine;
 use crate::ShmrError;
-use fuser::{FileAttr, FileType, Filesystem, KernelConfig, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow, FUSE_ROOT_ID, ReplyEmpty};
+use fuser::{
+    FileAttr, FileType, Filesystem, KernelConfig, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty,
+    ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow, FUSE_ROOT_ID,
+};
 use libc::c_int;
 use log::{debug, error, info, trace, warn};
 use std::collections::BTreeMap;
@@ -364,9 +367,7 @@ impl Filesystem for Shmr {
                     let inode = self.inode_db.get(entry_inode).unwrap();
                     reply.entry(&Duration::new(0, 0), &inode.to_fileattr(), 0)
                 }
-                None => {
-                    reply.error(libc::ENOENT)
-                },
+                None => reply.error(libc::ENOENT),
             }
         } else {
             panic!("parent inode is not a directory")
@@ -538,7 +539,8 @@ impl Filesystem for Shmr {
             "FUSE({}) 'mkdir' invoked for parent {} with name {:?}",
             req.unique(),
             parent,
-            name);
+            name
+        );
         match self.create(req, parent, name, mode | libc::S_IFDIR, umask, 0) {
             Ok(inode) => {
                 let inode = self.inode_db.get(&inode).unwrap().clone();
@@ -554,7 +556,16 @@ impl Filesystem for Shmr {
         todo!()
     }
 
-    fn rename(&mut self, req: &Request<'_>, parent: u64, name: &OsStr, newparent: u64, newname: &OsStr, _flags: u32, reply: ReplyEmpty) {
+    fn rename(
+        &mut self,
+        req: &Request<'_>,
+        parent: u64,
+        name: &OsStr,
+        newparent: u64,
+        newname: &OsStr,
+        _flags: u32,
+        reply: ReplyEmpty,
+    ) {
         trace!("FUSE({}) 'rename' invoked for parent {} with name {:?} to new parent {} with new name {:?}", req.unique(), parent, name, newparent, newname);
 
         // TODO Clean this up
@@ -570,7 +581,6 @@ impl Filesystem for Shmr {
                 reply.error(libc::EACCES);
                 return;
             }
-
 
             if let Some(mut descriptor) = self.descriptor_db.get_mut(&parent) {
                 if let InodeDescriptor::Directory(contents) = &mut *descriptor {
@@ -593,9 +603,7 @@ impl Filesystem for Shmr {
             }
 
             parent_inode.ctime = time_now();
-
         } else {
-
             let parent_inode = match self.inode_db.get(&parent) {
                 Some(inode) => inode,
                 None => {
@@ -616,7 +624,9 @@ impl Filesystem for Shmr {
                 }
             };
 
-            if parent_inode.kind != IFileType::Directory || new_parent_inode.kind != IFileType::Directory {
+            if parent_inode.kind != IFileType::Directory
+                || new_parent_inode.kind != IFileType::Directory
+            {
                 warn!("attempted to move file to a non-directory inode");
                 reply.error(libc::ENOTDIR);
                 return;
@@ -647,9 +657,11 @@ impl Filesystem for Shmr {
                 match contents.get(name.as_bytes()) {
                     Some(inode) => *inode,
                     // we already know this entry exists
-                    None =>  panic!("at the disco")
+                    None => panic!("at the disco"),
                 }
-            } else { panic!("at the disco"); };
+            } else {
+                panic!("at the disco");
+            };
 
             if let InodeDescriptor::Directory(contents) = &*new_parent_descriptor {
                 if contents.contains_key(newname.as_bytes()) {
@@ -684,9 +696,7 @@ impl Filesystem for Shmr {
             }
         }
 
-
         reply.ok();
-
     }
 
     // /// Create a symbolic link

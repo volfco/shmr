@@ -1,24 +1,27 @@
 use crate::vpf::VirtualPathBuf;
 use crate::ShmrError;
+use bytesize::ByteSize;
 use log::{debug, trace};
+use std::cmp::PartialEq;
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
+use sysinfo::Disks;
 
+pub mod block;
+pub mod buffer;
 pub mod erasure;
 pub mod hash;
 pub mod ops;
-pub mod buffer;
-pub mod block;
 
-
+#[allow(clippy::identity_op)]
 const DEFAULT_STORAGE_BLOCK_SIZE: usize = 1024 * 1024 * 1; // 1MB
 
-pub type PoolMap = HashMap<String, HashMap<String, PathBuf>>;
-
+/// Pool -> Bucket -> Base Directory
+pub type PoolMap = HashMap<String, HashMap<String, Bucket>>;
 /// Central Management of Open File Handles and resolution of VirtualPathBufs
 ///
 /// TODO Implement some sort of background flush mechanism
@@ -26,11 +29,11 @@ pub type PoolMap = HashMap<String, HashMap<String, PathBuf>>;
 pub struct IOEngine {
     /// Write Pool Name
     pub(crate) write_pool: String,
-    
+
     /// Map of Pools
     pub(crate) pools: PoolMap,
 
-    /// HashMap of VirtualPathBuf entries, and the associated File Handle + FilePath
+    /// HashMap of VirtualPathBuf entries, and the associated File Handle + PathBuf
     handles: Arc<RwLock<BTreeMap<VirtualPathBuf, (Arc<Mutex<File>>, PathBuf)>>>,
 
     run_state: Arc<Mutex<bool>>,
@@ -38,6 +41,7 @@ pub struct IOEngine {
     /// JoinHandle of the Background Thread
     worker_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
+
 impl IOEngine {
     // TODO Periodic flush, like FsDB2. <--
     // TODO Implement a LRU Cache for the handles
@@ -47,7 +51,7 @@ impl IOEngine {
             pools,
             handles: Arc::new(RwLock::new(BTreeMap::new())),
             run_state: Arc::new(Mutex::new(true)),
-            worker_handle: Arc::new(Mutex::new(None))
+            worker_handle: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -169,6 +173,108 @@ impl IOEngine {
 
         Ok(())
     }
+
+    /// Select n Buckets from the given Pool and return the names.
+    pub fn select_buckets(&self, pool: &str, count: usize) -> Result<Vec<String>, ShmrError> {
+        // TODO This function is ugly and could be refactored
+
+        // for now, we are going to return the pools in order of Priority & Free Space Percentage
+        let mut possible_buckets: Vec<(&String, &Bucket)> = self
+            .pools
+            .get(pool)
+            .ok_or(ShmrError::InvalidPoolId)?
+            .iter()
+            .filter(|(_, bucket)| bucket.priority > BucketPriority::IGNORE)
+            .collect();
+
+        possible_buckets.sort_by(|a, b| {
+            a.1.priority
+                .partial_cmp(&b.1.priority)
+                .unwrap()
+                .then(a.1.available.partial_cmp(&b.1.available).unwrap())
+        });
+
+        // if we are requesting more buckets
+
+        // if the number of entries in the possible buckets to return is less than the requested
+        // count... just duplicate the list until it has more than the requested amount.
+        // This way we will still get even-ish distribution
+        let copy = possible_buckets.clone();
+        while possible_buckets.len() < count {
+            possible_buckets.extend(copy.iter().cloned());
+        }
+
+        let selected_buckets: Vec<String> = possible_buckets
+            .iter()
+            .take(count)
+            .map(|(bucket_name, _)| bucket_name.clone().clone())
+            .collect();
+
+        Ok(selected_buckets)
+    }
 }
 
+#[derive(Ord, PartialOrd, Eq, PartialEq, Clone, Copy, Debug)]
+pub enum BucketPriority {
+    /// Prefer this bucket
+    PRIORITIZE = 4,
+    /// No Preference
+    NORMAL = 3,
+    /// Deprioritize this bucket.
+    DEPRIORITIZE = 2,
+    /// Ignore this Bucket. No new data will be written, but existing data will not be touched.
+    IGNORE = 1,
+    /// Actively Ignore this Bucket and Evacuate Data
+    EVACUATE = 0,
+}
 
+#[derive(Clone, Debug)]
+pub struct Bucket {
+    path: PathBuf,
+    /// Total Space in the Bucket
+    capacity: ByteSize,
+    /// Used Disk Space
+    available: ByteSize,
+    /// Bucket Priority
+    priority: BucketPriority,
+}
+impl Bucket {
+    pub fn new(path: PathBuf) -> Self {
+        Bucket {
+            path,
+            capacity: ByteSize::b(0),
+            available: ByteSize::b(0),
+            priority: BucketPriority::NORMAL,
+        }
+    }
+
+    /// Given a list of [`sysinfo::Disks`], update this Bucket
+    pub fn update(&mut self, disks: &Disks) {
+        for disk in disks.list() {
+            if disk.mount_point() == self.path.as_path() {
+                self.capacity = ByteSize::b(disk.total_space());
+                self.available = ByteSize::b(disk.available_space());
+
+                // there is only ever going to be one disk in the system that we're looking for
+                break;
+            }
+        }
+    }
+
+    pub fn path(&self) -> PathBuf {
+        self.path.clone()
+    }
+}
+
+pub fn build_poolmap(paths: HashMap<String, HashMap<String, PathBuf>>) -> PoolMap {
+    paths
+        .into_iter()
+        .map(|(pool_name, buckets)| {
+            let pool_buckets = buckets
+                .into_iter()
+                .map(|(bucket_name, path)| (bucket_name, Bucket::new(path)))
+                .collect();
+            (pool_name, pool_buckets)
+        })
+        .collect()
+}

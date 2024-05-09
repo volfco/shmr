@@ -2,8 +2,11 @@ use crate::storage::PoolMap;
 use crate::ShmrError;
 use log::{error, trace};
 use serde::{Deserialize, Serialize};
+use std::fmt::Display;
 use std::path::PathBuf;
 // use rkyv::with::Skip;
+
+pub const VPB_DEFAULT_FILE_EXT: &str = "bin";
 
 /// VirtualPathBuf is like PathBuf, but the location of the pool is not stored in the path itself.
 /// Instead, it is provided as a parameter during operations.
@@ -11,18 +14,16 @@ use std::path::PathBuf;
 /// There is no need for a constructor here because this has no state. I guess? idk
 #[derive(Serialize, Deserialize, PartialEq, Hash, Ord, PartialOrd, Eq, Debug, Clone)]
 pub struct VirtualPathBuf {
+    /// Drive Pool
     pub pool: String,
+    /// Specific drive in the Drive Pool
     pub bucket: String,
+    /// Filename in the Bucket
     pub filename: String,
     // #[with(Skip)]
     // resolved_path: Option<(PathBuf, PathBuf)>
 }
 impl VirtualPathBuf {
-    // pub fn resolve(&self, map: &PoolMap) -> Self {
-    //     let mut new = self.clone();
-    //     new.resolved_path = Some(self.get_path(map).unwrap());
-    //     new
-    // }
     /// Return the (Filename, Directory) for the file.
     /// It's inverted to avoid needing to create a copy of the directory name before joining the filename
     pub fn resolve(&self, map: &PoolMap) -> Result<(PathBuf, PathBuf), ShmrError> {
@@ -31,7 +32,7 @@ impl VirtualPathBuf {
         let mut path_buf = pool_map
             .get(&self.bucket)
             .ok_or(ShmrError::InvalidBucketId)?
-            .clone();
+            .path();
 
         path_buf.push(&self.filename[0..2]); // first two characters of the filename
         path_buf.push(&self.filename[2..4]); // next two characters of the filename
@@ -60,6 +61,11 @@ impl VirtualPathBuf {
                 false
             }
         }
+    }
+}
+impl Display for VirtualPathBuf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}({}):{}", self.pool, self.bucket, self.filename)
     }
 }
 

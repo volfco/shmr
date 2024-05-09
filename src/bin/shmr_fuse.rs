@@ -7,7 +7,7 @@ use fuser::MountOption;
 use log::{error, LevelFilter};
 use serde::{Deserialize, Serialize};
 use shmr::fuse::Shmr;
-use shmr::storage::IOEngine;
+use shmr::storage::{build_poolmap, IOEngine};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -52,9 +52,12 @@ fn main() {
     let options = vec![MountOption::FSName("fuser".to_string())];
 
     let mount = config.mount_dir.clone();
-    //
-    // // check if there is already something mounted at the mount point
-    let engine = IOEngine::new(config.write_pool.clone(), config.pools.clone());
+
+    // check if there is already something mounted at the mount point
+    let engine = IOEngine::new(
+        config.write_pool.clone(),
+        build_poolmap(config.pools.clone()),
+    );
     let fs = Shmr::open(config.metadata_dir, engine).unwrap();
     let result = fuser::mount2(fs, mount, &options);
     if let Err(e) = result {
