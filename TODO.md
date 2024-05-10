@@ -31,8 +31,31 @@ Goal. Full FUSE implementation that only uses the workspace/blocks directory to 
 - [ ] Garbage Collect Cached database entries
 - [ ] Copy on Write for Erasure Blocks
 
-cow
 
-for each storage block, there is a writes file. All writes are directed there, and then a background process merges 
-them in to the underlying file. 
+Refactor.
+- StorageBlock becomes a Struct, with buffer as non-serializable fields. Then there is a thread that periodically flushes the buffer.
+- VirtualPathBuf can hold it's own file handle. So no more management in the IOEngine
 
+need a way to make threads run at the same interval, but not exactly at the same time. . wrapper around the thread closure...
+that can also support a rapid shutdown. . 
+
+
+---
+
+Kernel is the thing that manages threads and shit. 
+```rust
+
+let k = Kernel::new();
+
+k.read(&vpb, buf, offset);
+
+```
+
+VirtualFile. Kernel passes I/O operation to the VirtualFile. VF returns the StorageBlock and offsets for the data. 
+Kernel takes the SBs to the SBBufferManager? and passes the I/O operation. The SBBM checks to see if the block is buffered.
+
+Kernel --> BlockBufferMgr
+             - keeps open buffers, and thread to flush them
+             - keeps open the file handles as well
+
+VirtualFile --> StorageBlock --> VirtualPathBuf

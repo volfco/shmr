@@ -61,12 +61,12 @@ mod tests {
         let engine: IOEngine = IOEngine::new("test_pool".to_string(), get_pool());
 
         let paths = vec![
-            VirtualPathBuf {
+          VirtualPathBuf {
                 pool: "test_pool".to_string(),
                 bucket: "bucket1".to_string(),
                 filename: filename1,
             },
-            VirtualPathBuf {
+          VirtualPathBuf {
                 pool: "test_pool".to_string(),
                 bucket: "bucket1".to_string(),
                 filename: filename2,
@@ -93,12 +93,12 @@ mod tests {
         let engine: IOEngine = IOEngine::new("test_pool".to_string(), get_pool());
 
         let paths = vec![
-            VirtualPathBuf {
+          VirtualPathBuf {
                 pool: "test_pool".to_string(),
                 bucket: "bucket1".to_string(),
                 filename: filename1,
             },
-            VirtualPathBuf {
+          VirtualPathBuf {
                 pool: "test_pool".to_string(),
                 bucket: "bucket1".to_string(),
                 filename: filename2,

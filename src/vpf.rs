@@ -8,10 +8,7 @@ use std::path::PathBuf;
 
 pub const VPB_DEFAULT_FILE_EXT: &str = "bin";
 
-/// VirtualPathBuf is like PathBuf, but the location of the pool is not stored in the path itself.
-/// Instead, it is provided as a parameter during operations.
-///
-/// There is no need for a constructor here because this has no state. I guess? idk
+/// VirtualPathBuf
 #[derive(Serialize, Deserialize, PartialEq, Hash, Ord, PartialOrd, Eq, Debug, Clone)]
 pub struct VirtualPathBuf {
     /// Drive Pool
@@ -46,21 +43,6 @@ impl VirtualPathBuf {
         );
 
         Ok(result)
-    }
-
-    pub fn resolve_path(&self, map: &PoolMap) -> Result<PathBuf, ShmrError> {
-        let full_path = self.resolve(map)?;
-        Ok(full_path.0)
-    }
-
-    pub fn exists(&self, map: &PoolMap) -> bool {
-        match self.resolve_path(map) {
-            Ok(path) => path.exists(),
-            Err(e) => {
-                error!("Error resolving path: {:?}", e);
-                false
-            }
-        }
     }
 }
 impl Display for VirtualPathBuf {

@@ -1,13 +1,27 @@
 use crate::storage::{block::StorageBlock, IOEngine};
 use crate::ShmrError;
 use log::debug;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 use std::{cmp, thread};
+use std::collections::BTreeMap;
+use std::fs::File;
+use std::path::PathBuf;
+use crate::vpf::VirtualPathBuf;
 
 /// StorageBlockBuffer Flush Interval
 const SBB_FLUSH_INTERVAL: u64 = 500; // in ms
+
+#[derive(Clone, Debug)]
+pub enum BlockTopology {
+    /// Single Shard
+    Single,
+    /// Mirrored Shards, with n mirrors
+    Mirror(usize),
+    /// Erasure Encoded. (Version, Data Shards, Parity Shards)
+    Erasure(u8, u8, u8)
+}
 
 /// Provides a buffer for a StorageBlock, if enabled. Passes through I/O operations if not.
 ///
@@ -16,9 +30,19 @@ const SBB_FLUSH_INTERVAL: u64 = 500; // in ms
 /// TODO Does it make sense to have this object store a reference to the I/O engine? We need it for flushing the buffer
 #[derive(Clone, Debug)]
 struct StorageBlockBuffer {
-    /// Underlying StorageBlock
-    // TOOD Rename to Inner
-    topology: StorageBlock,
+    /// StorageBlock UUID
+    uuid: uuid::Uuid,
+
+    /// Size of the StorageBlock.
+    /// This is a fixed size, and represents the maximum amount of data that can be stored in this
+    /// block. On-disk size might be a bit larger (or smaller) than this value.
+    size: usize,
+
+    /// Shards that make up this block.
+    shards: Vec<VirtualPathBuf>,
+
+    /// Layout of this StorageBlock
+    topology: BlockTopology,
 
     /// Buffer Enabled?
     buffered: bool,
@@ -30,9 +54,11 @@ struct StorageBlockBuffer {
 
     /// JoinHandle of the Background Thread
     worker_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
+
+    fs_handles: Arc<Mutex<BTreeMap<VirtualPathBuf, File>>>,
 }
 impl StorageBlockBuffer {
-    pub fn new(block: StorageBlock, buffer: bool) -> Self {
+    pub fn open(&mut self) -> Result<(), ShmrError> {
         let s = Self {
             topology: block,
             buffered: buffer,

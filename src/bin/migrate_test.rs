@@ -38,7 +38,7 @@ fn main() {
 
     // load config file
     let config = std::fs::read_to_string(&args.config).expect("could not read config file");
-    let config: FuseConfig = serde_yaml::from_str(&config).expect("could not parse config file");
+    let rconfig: FuseConfig = serde_yaml::from_str(&config).expect("could not parse config file");
 
     // let parts = args.topology.split(",").collect::<Vec<String>>();
     //

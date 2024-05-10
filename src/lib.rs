@@ -6,6 +6,8 @@ pub mod fsdb;
 pub mod fuse;
 pub mod storage;
 pub mod vpf;
+mod vfs;
+mod kernel;
 
 #[derive(Debug)]
 pub enum ShmrError {
@@ -15,6 +17,8 @@ pub enum ShmrError {
     EndOfFile,
     FsError(std::io::Error),
     EcError(reed_solomon_erasure::Error),
+    ShardOpened,
+    ShardMissing
 }
 impl From<std::io::Error> for ShmrError {
     fn from(value: Error) -> Self {
