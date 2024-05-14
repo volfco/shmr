@@ -26,7 +26,7 @@ Goal. Full FUSE implementation that only uses the workspace/blocks directory to 
     - [ ] Truncate
 
 - [ ] Rebuild decode utility
-- [X] Test moving file from a Single file to Erasure Format
+- [ ] Test moving file from a Single file to Erasure Format
 - [ ] Garbage Collect Filehandles
 - [ ] Garbage Collect Cached database entries
 - [ ] Copy on Write for Erasure Blocks

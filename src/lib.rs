@@ -9,9 +9,11 @@ use serde::{Deserialize, Serialize};
 use sysinfo::Disks;
 
 pub mod fsdb;
-pub mod fuse;
 pub mod kernel;
 pub mod vfs;
+
+pub mod fuse;
+pub mod iotracker;
 
 /// Pool -> Bucket -> Base Directory
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]

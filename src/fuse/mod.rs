@@ -1,7 +1,11 @@
-use serde::{Deserialize, Serialize};
+mod types;
+mod magics;
+mod glint;
+mod cache;
+
 
 use crate::fsdb::FsDB2;
-use crate::ShmrError;
+use crate::{PoolMap, ShmrError};
 use fuser::{
     FileAttr, FileType, Filesystem, KernelConfig, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty,
     ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow, FUSE_ROOT_ID,
@@ -13,11 +17,11 @@ use std::ffi::OsStr;
 use std::os::unix::prelude::OsStrExt;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use crate::kernel::Kernel;
+use crate::fuse::types::{IFileType, Inode, InodeDescriptor};
 use crate::vfs::VirtualFile;
+use crate::fuse::magics::*;
 
-const MAX_NAME_LENGTH: u32 = 255;
-const DEFAULT_CHUNK_SIZE: usize = 4096;
+
 #[allow(dead_code)]
 pub fn time_now() -> (i64, u32) {
     let now = SystemTime::now();
@@ -35,140 +39,17 @@ fn system_time_from_time(secs: i64, nsecs: u32) -> SystemTime {
     }
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-pub enum IFileType {
-    /// Named pipe (S_IFIFO)
-    NamedPipe,
-    /// Character device (S_IFCHR)
-    CharDevice,
-    /// Block device (S_IFBLK)
-    BlockDevice,
-    /// Directory (S_IFDIR)
-    Directory,
-    /// Regular file (S_IFREG)
-    RegularFile,
-    /// Symbolic link (S_IFLNK)
-    Symlink,
-    /// Unix domain socket (S_IFSOCK)
-    Socket,
-}
-impl From<IFileType> for fuser::FileType {
-    fn from(value: IFileType) -> Self {
-        match value {
-            IFileType::NamedPipe => fuser::FileType::NamedPipe,
-            IFileType::CharDevice => fuser::FileType::CharDevice,
-            IFileType::BlockDevice => fuser::FileType::BlockDevice,
-            IFileType::Directory => fuser::FileType::Directory,
-            IFileType::RegularFile => fuser::FileType::RegularFile,
-            IFileType::Symlink => fuser::FileType::Symlink,
-            IFileType::Socket => fuser::FileType::Socket,
-        }
-    }
-}
 
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
-pub struct Inode {
-    /// Inode number
-    pub ino: u64,
-    /// Size in bytes
-    pub size: u64,
-    /// Size in blocks
-    pub blocks: u64,
-    /// Time of last access
-    pub atime: (i64, u32),
-    /// Time of last modification
-    pub mtime: (i64, u32),
-    /// Time of last change
-    pub ctime: (i64, u32),
-    /// Time of creation (macOS only)
-    pub crtime: (i64, u32),
-    /// Kind of file (directory, file, pipe, etc)
-    pub kind: IFileType,
-    /// Permissions
-    pub perm: u16,
-    /// Number of hard links
-    pub nlink: u32,
-    /// User id
-    pub uid: u32,
-    /// Group id
-    pub gid: u32,
-    /// Rdev
-    pub rdev: u32,
-    /// Block size
-    pub blksize: u32,
-    /// Flags (macOS only, see chflags(2))
-    pub flags: u32,
-
-    pub xattrs: BTreeMap<Vec<u8>, Vec<u8>>,
-}
-impl Inode {
-    pub fn check_access(&self, uid: u32, gid: u32, mut access_mask: i32) -> bool {
-        // F_OK tests for existence of file
-        if access_mask == libc::F_OK {
-            return true;
-        }
-
-        let file_mode = self.perm as i32;
-
-        // root is allowed to read & write anything
-        if uid == 0 {
-            // root only allowed to exec if one of the X bits is set
-            access_mask &= libc::X_OK;
-            access_mask -= access_mask & (file_mode >> 6);
-            access_mask -= access_mask & (file_mode >> 3);
-            access_mask -= access_mask & file_mode;
-            return access_mask == 0;
-        }
-
-        if uid == self.uid {
-            access_mask -= access_mask & (file_mode >> 6);
-        } else if gid == self.gid {
-            // TODO we might need more indepth group checking
-            access_mask -= access_mask & (file_mode >> 3);
-        } else {
-            access_mask -= access_mask & file_mode;
-        }
-
-        access_mask == 0
-    }
-    fn to_fileattr(&self) -> FileAttr {
-        FileAttr {
-            ino: self.ino,
-            size: self.size,
-            blocks: self.blocks,
-            atime: system_time_from_time(self.atime.0, self.atime.1),
-            mtime: system_time_from_time(self.mtime.0, self.mtime.1),
-            ctime: system_time_from_time(self.ctime.0, self.ctime.1),
-            crtime: system_time_from_time(self.crtime.0, self.crtime.1),
-            kind: self.kind.clone().into(),
-            perm: self.perm,
-            nlink: self.nlink,
-            uid: self.uid,
-            gid: self.gid,
-            rdev: self.rdev,
-            blksize: self.blksize,
-            flags: self.flags,
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum InodeDescriptor {
-    File(VirtualFile),
-    /// InodeDescriptor for a directory, where the BTreeMap is (filename -> inode)
-    Directory(BTreeMap<Vec<u8>, u64>),
-    Symlink,
-}
 pub struct ShmrFuse {
-    kernel: Kernel,
+    pool_map: PoolMap,
     inode_db: FsDB2<u64, Inode>,
     descriptor_db: FsDB2<u64, InodeDescriptor>,
 }
 impl ShmrFuse {
-    pub fn open(path: PathBuf, kernel: Kernel) -> Result<Self, ShmrError> {
+    pub fn open(pool_map: PoolMap, path: PathBuf) -> Result<Self, ShmrError> {
         let db_path = path.join("shmr");
         Ok(Self {
-            kernel,
+            pool_map,
             inode_db: FsDB2::open(db_path.join("inode_db")).unwrap(),
             descriptor_db: FsDB2::open(db_path.join("descriptor_db")).unwrap(),
         })
@@ -177,10 +58,10 @@ impl ShmrFuse {
     fn check_access(&self, inode: u64, uid: u32, gid: u32, access_mask: i32) -> bool {
         self.inode_db.has(&inode)
             && self
-                .inode_db
-                .get(&inode)
-                .unwrap()
-                .check_access(uid, gid, access_mask)
+            .inode_db
+            .get(&inode)
+            .unwrap()
+            .check_access(uid, gid, access_mask)
     }
 
     fn create(
@@ -763,7 +644,7 @@ impl Filesystem for ShmrFuse {
         };
         // fuck u biiiiitch
         let mut vf = vf.clone();
-        vf.populate(self.kernel.pools.clone());
+        vf.populate(self.pool_map.clone());
 
         let mut buffer = vec![0; vf.chunk_size];
 
@@ -826,7 +707,7 @@ impl Filesystem for ShmrFuse {
             }
         };
 
-        let mut vf: &mut VirtualFile = match &mut *descriptor {
+        let vf: &mut VirtualFile = match &mut *descriptor {
             InodeDescriptor::File(vf) => vf,
             _ => {
                 error!("Inode {} is not a file", ino);
@@ -834,7 +715,7 @@ impl Filesystem for ShmrFuse {
                 return;
             }
         };
-        vf.populate(self.kernel.pools.clone());
+        vf.populate(self.pool_map.clone());
 
         match &mut vf.write(offset as usize, data) {
             Ok(amount) => {

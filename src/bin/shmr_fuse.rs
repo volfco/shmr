@@ -6,10 +6,9 @@ use clap::Parser;
 use fuser::MountOption;
 use log::{error, LevelFilter};
 use serde::{Deserialize, Serialize};
-use shmr::fuse::ShmrFuse;
-use shmr::{build_poolmap, PoolMap};
+use shmr::build_poolmap;
 use std::path::PathBuf;
-use shmr::kernel::Kernel;
+use shmr::fuse::ShmrFuse;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -55,9 +54,8 @@ fn main() {
     let mount = config.mount_dir.clone();
 
     let pools = build_poolmap(config.write_pool.clone(), config.pools.clone());
-    let kernel = Kernel::new(pools);
 
-    let fs = ShmrFuse::open(config.metadata_dir, kernel).unwrap();
+    let fs = ShmrFuse::open(pools, config.metadata_dir).unwrap();
     let result = fuser::mount2(fs, mount, &options);
     if let Err(e) = result {
         // Return a special error code for permission denied, which usually indicates that

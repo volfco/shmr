@@ -2,8 +2,10 @@ pub mod path;
 pub mod block;
 
 use std::cmp;
-use log::{debug, trace};
+use std::time::Instant;
+use log::trace;
 use serde::{Deserialize, Serialize};
+use crate::iotracker::IOTracker;
 use crate::ShmrError;
 use crate::PoolMap;
 use crate::vfs::block::{BlockTopology, VIRTUAL_BLOCK_DEFAULT_SIZE, VirtualBlock};
@@ -43,7 +45,13 @@ pub struct VirtualFile {
     pub blocks: Vec<VirtualBlock>,
 
     #[serde(skip)]
-    pool_map: Option<PoolMap>
+    pool_map: Option<PoolMap>,
+
+    #[serde(skip)]
+    buffered: bool,
+
+    #[serde(skip)]
+    io_stat: IOTracker
 }
 impl Default for VirtualFile {
     fn default() -> Self {
@@ -58,6 +66,8 @@ impl VirtualFile {
             chunk_map: vec![],
             blocks: vec![],
             pool_map: None,
+            buffered: false,
+            io_stat: IOTracker::new()
         }
     }
 
@@ -102,6 +112,10 @@ impl VirtualFile {
 
         self.blocks.push(block);
         Ok(())
+    }
+
+    pub fn iostat(&self) -> (Instant, usize, usize) {
+        self.io_stat.read()
     }
 
     pub fn read(&self, pos: usize, buf: &mut [u8]) -> Result<usize, ShmrError> {
@@ -152,6 +166,7 @@ impl VirtualFile {
             chk_pos = 0;
         }
 
+        self.io_stat.inc_read();
         Ok(read)
     }
 
@@ -192,6 +207,7 @@ impl VirtualFile {
         // size is the largest (offset + written buffer)
         self.size = cmp::max(self.size, pos + bf);
 
+        self.io_stat.inc_write();
         Ok(written)
     }
 }

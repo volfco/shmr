@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-use log::{debug, info, trace, warn};
+use log::{debug, trace, warn};
 use reed_solomon_erasure::galois_8::ReedSolomon;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -74,6 +74,7 @@ pub struct VirtualBlock {
     #[serde(skip)]
     run_handle: Arc<Mutex<Option<JoinHandle<()>>>>
 
+    // TODO Add an IOTracker for the block as well?
 }
 impl Default for VirtualBlock {
     fn default() -> Self {

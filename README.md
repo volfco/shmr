@@ -1,5 +1,8 @@
 A Purpose Built filesystem for use with SMR Hard Drives. 
 
+**Prototype Stage** If you use this for actual workloads, I'm going to laugh at you.
+
+
 Unlike a traditional file system, Shmr acts as a Virtual Filesystem on top of a standard file system. Shmr stores files 
 as a series of fixed size blocks, and uses an internal key/value store to map the blocks to the underlying storage. 
 
