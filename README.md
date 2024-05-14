@@ -35,6 +35,30 @@ shards, but you will need a special utility for this.
 NOTE: There might be a few bytes of padding in the last data shard. You need to know the default block size. 
 ` (length as f32 / data_shards as f32).ceil() as usize`
 
-```rust
-// TODO Implement the shard identification by filename
+```text
+Single: {uuid}_single.bin
+Mirror: {uuid}_mirror_{shard number}_{total shards}.bin
+Ec: {uuid}_ec_{data}_{parity}_{d or p}{shard number}.bin
 ```
+
+## metadata disk format
+`sled` is used to store the metadata. All you need to know is that it is an embedded key-value store. 
+
+### inode db
+### descriptor db
+This database is used to store the contents of the inode; represented as the [`fuse::InodeDescriptor`] enum. 
+
+#### [`fuse::InodeDescriptor::Directory`]
+For Directories, the contents are stored as a `BTreeMap<FileName, Inode>`. 
+
+#### [`fuse::InodeDescriptor::File`]
+Files are represented as by [`file::VirtualFile`]. This Struct contains the File Size, Chunk Size, Chunk Map, and Block Map.
+
+
+
+
+## unfinished thoughts
+### pricing ideas
+- oss. community support
+- $29.99. lifetime updates & gratitude
+- $99.99. lifetime updates, gratitude, and some entitlement to support. It's an open source project, you're expected to know what you're doing. But buy this, and you will be entitled to best effort support. 

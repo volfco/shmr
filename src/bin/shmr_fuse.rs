@@ -6,9 +6,10 @@ use clap::Parser;
 use fuser::MountOption;
 use log::{error, LevelFilter};
 use serde::{Deserialize, Serialize};
-use shmr::fuse::Shmr;
-use shmr::storage::IOEngine;
+use shmr::fuse::ShmrFuse;
+use shmr::{build_poolmap, PoolMap};
 use std::path::PathBuf;
+use shmr::kernel::Kernel;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -52,10 +53,11 @@ fn main() {
     let options = vec![MountOption::FSName("fuser".to_string())];
 
     let mount = config.mount_dir.clone();
-    //
-    // // check if there is already something mounted at the mount point
-    let engine = IOEngine::new(config.write_pool.clone(), config.pools.clone());
-    let fs = Shmr::open(config.metadata_dir, engine).unwrap();
+
+    let pools = build_poolmap(config.write_pool.clone(), config.pools.clone());
+    let kernel = Kernel::new(pools);
+
+    let fs = ShmrFuse::open(config.metadata_dir, kernel).unwrap();
     let result = fuser::mount2(fs, mount, &options);
     if let Err(e) = result {
         // Return a special error code for permission denied, which usually indicates that
@@ -65,6 +67,6 @@ fn main() {
             std::process::exit(2);
         }
     }
-    //
+    // //
     // // TODO unmount the filesystem when the program exits
 }
