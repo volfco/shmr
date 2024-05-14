@@ -30,6 +30,7 @@ Goal. Full FUSE implementation that only uses the workspace/blocks directory to 
 - [ ] Garbage Collect Filehandles
 - [ ] Garbage Collect Cached database entries
 - [ ] Copy on Write for Erasure Blocks
+
 ## 0.0.3
 ## 0.0.4
 ### General
@@ -39,3 +40,6 @@ Goal. Full FUSE implementation that only uses the workspace/blocks directory to 
 ### Kernel - Block Cache
 - [ ] Implement an intelligent eviction policy. Bonus points if it's pluggable. Being able to have the fuse interface provide hints would be nice down the road.
       ref: https://en.wikipedia.org/wiki/Page_replacement_algorithm & https://en.wikipedia.org/wiki/Cache_replacement_policies
+
+## 0.0.5 
+- figure out why 2MBs of data takes 3MB of blocks. I'm off by 1 somewhere

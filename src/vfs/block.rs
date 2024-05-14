@@ -218,12 +218,12 @@ impl VirtualBlock {
             // only resize it to the size of the incoming buffer, not the size of the block. One of
             // the reasons is that if we zero-fill the entire buffer, we will write it all to disk, which will take up extra space.
             // TODO this might have a big enough performance impact to warrant a better solution.
-            if buffer.len() < buf.len() {
-                info!("[{}] buffer undersized for write. expanding", self.uuid);
-                buffer.resize(buf.len(), 0);
+            let ending_pos = pos + buf.len();
+            if buffer.len() < ending_pos {
+                buffer.resize(ending_pos, 0);
             }
 
-            buffer[pos..pos + buf.len()].copy_from_slice(buf);
+            buffer[pos..ending_pos].copy_from_slice(buf);
         }
 
         if !self.buffered {
@@ -348,7 +348,6 @@ impl VirtualBlock {
         // because Vec has a length of zero by default, and reading a file requires a buffer of a
         // certain size,
         if buffer.len() < self.size {
-            info!("[{}] buffer undersized for write. expanding", self.uuid);
             buffer.resize(self.size, 0);
         }
 
@@ -582,7 +581,6 @@ mod tests {
 
     #[test]
     fn test_virtual_block_erasure_buffered() {
-        env_logger::init();
         let pools = get_pool();
 
         let block = VirtualBlock::new(&pools, 1024, crate::vfs::block::BlockTopology::Erasure(1, 3, 2));

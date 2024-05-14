@@ -2,7 +2,7 @@ pub mod path;
 pub mod block;
 
 use std::cmp;
-use log::trace;
+use log::{debug, trace};
 use serde::{Deserialize, Serialize};
 use crate::ShmrError;
 use crate::PoolMap;
@@ -116,6 +116,11 @@ impl VirtualFile {
             panic!("pool_map has not been populated. Unable to perform operation.")
         };
 
+        // if the chunk map is empty, there's nothing to read... and the logic below falls apart
+        if self.chunk_map.is_empty() {
+            return Ok(0);
+        }
+
         let mut read = 0; // amount read
         let mut chk_pos = pos % self.chunk_size; // initial chunk offset
         let pos_chk = pos / self.chunk_size;
@@ -124,7 +129,7 @@ impl VirtualFile {
         let chunk_range = pos_chk..=pos_chk + buf_chk;
 
         for idx in chunk_range {
-            let (block_idx, block_pos) = self.chunk_map.get(idx).expect("wtf bro");
+            let (block_idx, block_pos) = self.chunk_map.get(idx).expect("there's nothing here") ;
 
             // we might get a read that starts in the middle a chunk
             // in that case, just move the block cursor forward the amount of the chunk offset
@@ -185,4 +190,49 @@ impl VirtualFile {
 
         Ok(written)
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::random_data;
+    use crate::tests::get_pool;
+    use crate::vfs::VirtualFile;
+
+    #[test]
+    fn test_virtual_file() {
+        env_logger::init();
+        let pools = get_pool();
+
+        let mut vf = VirtualFile::new().populate(pools.clone());
+        let data = random_data(8192);
+
+        let written = vf.write(0, &data);
+        assert_eq!(written.unwrap(), 8192);
+
+        assert_eq!(vf.size(), 8192);
+        assert_eq!(vf.blocks.len(), 1);
+
+        let mut buf = vec![0u8; 8192];
+        let read = vf.read(0, &mut buf);
+        assert_eq!(read.unwrap(), 8192);
+
+        assert_eq!(buf, data);
+    }
+
+    #[test]
+    fn test_virtual_file_2mb() {
+        let pools = get_pool();
+        let amt = 1024 * 1024 * 2;
+
+        let mut vf = VirtualFile::new().populate(pools);
+        let data = random_data(amt);
+
+        let written = vf.write(0, &data);
+        assert_eq!(written.unwrap(), amt);
+
+        // assert_eq!(vf.size(), amt);
+
+        assert_eq!(vf.blocks.len(), 3);
+    }
+
 }
