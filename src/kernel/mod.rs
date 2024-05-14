@@ -27,7 +27,7 @@ pub struct Kernel {
     block_cache: Arc<RwLock<BTreeMap<Uuid, VirtualBlock>>>
 }
 impl Kernel {
-    pub fn init(pools: PoolMap) -> Self {
+    pub fn new(pools: PoolMap) -> Self {
 
         Kernel {
             run: Arc::new(Mutex::new(true)),

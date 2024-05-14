@@ -61,15 +61,19 @@ impl VirtualFile {
         }
     }
 
-    pub fn populate(self, pool_map: PoolMap) -> Self {
-        let mut s = self;
-
-        for block in s.blocks.iter_mut() {
+    pub fn populate(&mut self, pool_map: PoolMap)  {
+        for block in self.blocks.iter_mut() {
             block.populate(pool_map.clone());
         }
-        s.pool_map = Some(pool_map);
+        self.pool_map = Some(pool_map);
+    }
 
-        s
+    /// Flush & Unloads storage blocks from memory
+    pub fn unload(&self) -> Result<(), ShmrError> {
+        for block in self.blocks.iter() {
+            block.drop_buffer()?;
+        }
+        Ok(())
     }
 
     /// Return the known filesize
@@ -83,7 +87,7 @@ impl VirtualFile {
     }
 
     /// Allocate a new StorageBlock then extend the chunk map
-    fn allocate_block(&mut self) -> anyhow::Result<(), ShmrError> {
+    fn allocate_block(&mut self) -> Result<(), ShmrError> {
         let pools = match &self.pool_map {
             None => panic!("pool_map has not been populated. Unable to perform operation."),
             Some(pools) => pools
@@ -100,7 +104,7 @@ impl VirtualFile {
         Ok(())
     }
 
-    pub fn read(&self, pos: usize, buf: &mut [u8]) -> anyhow::Result<usize, ShmrError> {
+    pub fn read(&self, pos: usize, buf: &mut [u8]) -> Result<usize, ShmrError> {
         let bf = buf.len();
         if bf == 0 {
             trace!("write request buf len == 0. nothing to do");
@@ -151,7 +155,7 @@ impl VirtualFile {
         Ok(read)
     }
 
-    pub fn write(&mut self, pos: usize, buf: &[u8]) -> anyhow::Result<usize, ShmrError> {
+    pub fn write(&mut self, pos: usize, buf: &[u8]) -> Result<usize, ShmrError> {
         let bf = buf.len();
         if bf == 0 {
             trace!("write request buf len == 0. nothing to do");

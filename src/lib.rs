@@ -10,8 +10,8 @@ use sysinfo::Disks;
 
 pub mod fsdb;
 pub mod fuse;
-mod kernel;
-mod vfs;
+pub mod kernel;
+pub mod vfs;
 
 /// Pool -> Bucket -> Base Directory
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]

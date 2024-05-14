@@ -159,12 +159,12 @@ pub enum InodeDescriptor {
     Directory(BTreeMap<Vec<u8>, u64>),
     Symlink,
 }
-pub struct Shmr {
+pub struct ShmrFuse {
     kernel: Kernel,
     inode_db: FsDB2<u64, Inode>,
     descriptor_db: FsDB2<u64, InodeDescriptor>,
 }
-impl Shmr {
+impl ShmrFuse {
     pub fn open(path: PathBuf, kernel: Kernel) -> Result<Self, ShmrError> {
         let db_path = path.join("shmr");
         Ok(Self {
@@ -299,7 +299,7 @@ impl Shmr {
         Ok(ino)
     }
 }
-impl Filesystem for Shmr {
+impl Filesystem for ShmrFuse {
     fn init(&mut self, _req: &Request<'_>, _config: &mut KernelConfig) -> Result<(), c_int> {
         if !self.inode_db.has(&FUSE_ROOT_ID) {
             info!("inode {} does not exist, creating root node", FUSE_ROOT_ID);
@@ -761,6 +761,9 @@ impl Filesystem for Shmr {
                 return;
             }
         };
+        // fuck u biiiiitch
+        let mut vf = vf.clone();
+        vf.populate(self.kernel.pools.clone());
 
         let mut buffer = vec![0; vf.chunk_size];
 
@@ -823,7 +826,7 @@ impl Filesystem for Shmr {
             }
         };
 
-        let vf = match &mut *descriptor {
+        let mut vf: &mut VirtualFile = match &mut *descriptor {
             InodeDescriptor::File(vf) => vf,
             _ => {
                 error!("Inode {} is not a file", ino);
@@ -831,6 +834,7 @@ impl Filesystem for Shmr {
                 return;
             }
         };
+        vf.populate(self.kernel.pools.clone());
 
         match &mut vf.write(offset as usize, data) {
             Ok(amount) => {
