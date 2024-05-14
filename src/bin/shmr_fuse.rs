@@ -7,7 +7,7 @@ use fuser::MountOption;
 use log::{error, LevelFilter};
 use serde::{Deserialize, Serialize};
 use shmr::fuse::Shmr;
-use shmr::storage::{build_poolmap, IOEngine};
+use shmr::build_poolmap;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -53,21 +53,22 @@ fn main() {
 
     let mount = config.mount_dir.clone();
 
-    // check if there is already something mounted at the mount point
-    let engine = IOEngine::new(
-        config.write_pool.clone(),
-        build_poolmap(config.pools.clone()),
-    );
-    let fs = Shmr::open(config.metadata_dir, engine).unwrap();
-    let result = fuser::mount2(fs, mount, &options);
-    if let Err(e) = result {
-        // Return a special error code for permission denied, which usually indicates that
-        // "user_allow_other" is missing from /etc/fuse.conf
-        if e.kind() == ErrorKind::PermissionDenied {
-            error!("{}", e.to_string());
-            std::process::exit(2);
-        }
-    }
-    //
+    todo!();
+    // // check if there is already something mounted at the mount point
+    // let engine = IOEngine::new(
+    //     config.write_pool.clone(),
+    //     build_poolmap(config.pools.clone()),
+    // );
+    // let fs = Shmr::open(config.metadata_dir, engine).unwrap();
+    // let result = fuser::mount2(fs, mount, &options);
+    // if let Err(e) = result {
+    //     // Return a special error code for permission denied, which usually indicates that
+    //     // "user_allow_other" is missing from /etc/fuse.conf
+    //     if e.kind() == ErrorKind::PermissionDenied {
+    //         error!("{}", e.to_string());
+    //         std::process::exit(2);
+    //     }
+    // }
+    // //
     // // TODO unmount the filesystem when the program exits
 }

@@ -58,4 +58,7 @@ Files are represented as by [`file::VirtualFile`]. This Struct contains the File
 
 
 ## unfinished thoughts
-
+### pricing ideas
+- oss. community support
+- $29.99. lifetime updates & gratitude
+- $99.99. lifetime updates, gratitude, and some entitlement to support. It's an open source project, you're expected to know what you're doing. But buy this, and you will be entitled to best effort support. 

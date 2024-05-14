@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::file::{VirtualFile, DEFAULT_CHUNK_SIZE};
 use crate::fsdb::FsDB2;
-use crate::storage::IOEngine;
 use crate::ShmrError;
 use fuser::{
     FileAttr, FileType, Filesystem, KernelConfig, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty,
@@ -15,9 +13,11 @@ use std::ffi::OsStr;
 use std::os::unix::prelude::OsStrExt;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use crate::kernel::Kernel;
+use crate::vfs::VirtualFile;
 
 const MAX_NAME_LENGTH: u32 = 255;
-
+const DEFAULT_CHUNK_SIZE: usize = 4096;
 #[allow(dead_code)]
 pub fn time_now() -> (i64, u32) {
     let now = SystemTime::now();
@@ -152,7 +152,7 @@ impl Inode {
     }
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum InodeDescriptor {
     File(VirtualFile),
     /// InodeDescriptor for a directory, where the BTreeMap is (filename -> inode)
@@ -160,15 +160,15 @@ pub enum InodeDescriptor {
     Symlink,
 }
 pub struct Shmr {
-    engine: IOEngine,
+    kernel: Kernel,
     inode_db: FsDB2<u64, Inode>,
     descriptor_db: FsDB2<u64, InodeDescriptor>,
 }
 impl Shmr {
-    pub fn open(path: PathBuf, engine: IOEngine) -> Result<Self, ShmrError> {
+    pub fn open(path: PathBuf, kernel: Kernel) -> Result<Self, ShmrError> {
         let db_path = path.join("shmr");
         Ok(Self {
-            engine,
+            kernel,
             inode_db: FsDB2::open(db_path.join("inode_db")).unwrap(),
             descriptor_db: FsDB2::open(db_path.join("descriptor_db")).unwrap(),
         })
@@ -552,7 +552,7 @@ impl Filesystem for Shmr {
         }
     }
 
-    fn unlink(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: ReplyEmpty) {
+    fn unlink(&mut self, _req: &Request<'_>, _parent: u64, _name: &OsStr, _reply: ReplyEmpty) {
         todo!()
     }
 
@@ -765,7 +765,7 @@ impl Filesystem for Shmr {
         let mut buffer = vec![0; vf.chunk_size];
 
         // TODO this might not work because offset might be negative?
-        match vf.read(&self.engine, offset as usize, &mut buffer) {
+        match vf.read(offset as usize, &mut buffer) {
             Ok(_) => reply.data(&buffer),
             Err(e) => {
                 error!("Failed to read data to file: {:?}", e);
@@ -832,7 +832,7 @@ impl Filesystem for Shmr {
             }
         };
 
-        match &mut vf.write(&self.engine, offset as usize, data) {
+        match &mut vf.write(offset as usize, data) {
             Ok(amount) => {
                 // update the inode
                 file_inode.size = vf.size();

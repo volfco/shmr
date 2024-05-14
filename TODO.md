@@ -1,5 +1,5 @@
 
-## 0.1.0
+## 0.0.1
 Goal. Full FUSE implementation that only uses the workspace/blocks directory to store data
 
 - [X] StorageBlock Working
@@ -30,32 +30,12 @@ Goal. Full FUSE implementation that only uses the workspace/blocks directory to 
 - [ ] Garbage Collect Filehandles
 - [ ] Garbage Collect Cached database entries
 - [ ] Copy on Write for Erasure Blocks
-
-
-Refactor.
-- StorageBlock becomes a Struct, with buffer as non-serializable fields. Then there is a thread that periodically flushes the buffer.
-- VirtualPathBuf can hold it's own file handle. So no more management in the IOEngine
-
-need a way to make threads run at the same interval, but not exactly at the same time. . wrapper around the thread closure...
-that can also support a rapid shutdown. . 
-
-
----
-
-Kernel is the thing that manages threads and shit. 
-```rust
-
-let k = Kernel::new();
-
-k.read(&vpb, buf, offset);
-
-```
-
-VirtualFile. Kernel passes I/O operation to the VirtualFile. VF returns the StorageBlock and offsets for the data. 
-Kernel takes the SBs to the SBBufferManager? and passes the I/O operation. The SBBM checks to see if the block is buffered.
-
-Kernel --> BlockBufferMgr
-             - keeps open buffers, and thread to flush them
-             - keeps open the file handles as well
-
-VirtualFile --> StorageBlock --> VirtualPathBuf
+## 0.0.3
+## 0.0.4
+### General
+- [ ] https://docs.rs/metrics/
+  - [ ] Prometheus Metrics Web Interface?
+  - [ ] `/mount_dir/_stats` virtual file system
+### Kernel - Block Cache
+- [ ] Implement an intelligent eviction policy. Bonus points if it's pluggable. Being able to have the fuse interface provide hints would be nice down the road.
+      ref: https://en.wikipedia.org/wiki/Page_replacement_algorithm & https://en.wikipedia.org/wiki/Cache_replacement_policies

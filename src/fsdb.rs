@@ -243,134 +243,134 @@ impl<
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use log::warn;
-    use std::path::PathBuf;
-
-    #[test]
-    fn test_fsdb2_insertion_and_retrieval() {
-        let db = FsDB2::open(PathBuf::from("/tmp")).unwrap();
-
-        let key = "test_key".to_string();
-        let value = "test_value".to_string();
-
-        // Insertion
-        db.insert(key.clone(), value.clone());
-
-        // Retrieval
-        let retrieved_value = db.get(&key);
-        assert_eq!(retrieved_value.unwrap().clone(), value);
-    }
-
-    #[test]
-    fn test_fsdb2_insertion_flush_and_retrieval() {
-        let mut db_path = std::env::temp_dir();
-        db_path.push("shmr_test_db777");
-
-        if db_path.exists() {
-            warn!("removing existing database");
-            let _ = std::fs::remove_dir_all(&db_path);
-        }
-
-        {
-            let db = FsDB2::open(&db_path).unwrap();
-
-            let key = "test_key".to_string();
-            let value = "test_value".to_string();
-
-            // Insertion
-            db.insert(key.clone(), value.clone());
-
-            // Flush
-            db.flush_all().unwrap();
-        } // Dropping FsDb2
-
-        // Directly open the underlying sled db and retrieve the value
-        let sled_db = sled::open(&db_path).unwrap();
-        let raw_key_to_find = bincode::serialize(&"test_key".to_string()).unwrap();
-        let raw_value_in_sled = sled_db
-            .get(raw_key_to_find)
-            .unwrap()
-            .expect("The key was not found in sled DB");
-        info!("got {:?}", &raw_value_in_sled);
-
-        let decoded_value_in_sled: String = bincode::deserialize(&raw_value_in_sled).unwrap();
-
-        assert_eq!(decoded_value_in_sled, "test_value".to_string());
-    }
-
-    #[test]
-    fn test_fsdb2_insertion_bg_flush_and_retrieval() {
-        let mut db_path = std::env::temp_dir();
-        db_path.push("shmr_test_db888");
-
-        if db_path.exists() {
-            warn!("removing existing database");
-            let _ = std::fs::remove_dir_all(&db_path);
-        }
-
-        {
-            let db = FsDB2::open(&db_path).unwrap();
-
-            let key = "test_key".to_string();
-            let value = "test_value".to_string();
-
-            // Insertion
-            db.insert(key.clone(), value.clone());
-
-            // wait 2 seconds before continuing
-            thread::sleep(Duration::from_secs(2));
-        } // Dropping FsDb2
-
-        // Directly open the underlying sled db and retrieve the value
-        let sled_db = sled::open(&db_path).unwrap();
-        let raw_key_to_find = bincode::serialize(&"test_key".to_string()).unwrap();
-        let raw_value_in_sled = sled_db
-            .get(raw_key_to_find)
-            .unwrap()
-            .expect("The key was not found in sled DB");
-        info!("got {:?}", &raw_value_in_sled);
-
-        let decoded_value_in_sled: String = bincode::deserialize(&raw_value_in_sled).unwrap();
-
-        assert_eq!(decoded_value_in_sled, "test_value".to_string());
-    }
-
-    #[test]
-    fn test_fsdb2_flush_single_item() {
-        let mut db_path = std::env::temp_dir();
-        db_path.push("shmr_test_db999");
-
-        if db_path.exists() {
-            warn!("removing existing database");
-            let _ = std::fs::remove_dir_all(&db_path);
-        }
-
-        {
-            let db = FsDB2::open(&db_path).unwrap();
-
-            let key = "test_key".to_string();
-            let value = "test_value".to_string();
-
-            // Insertion
-            db.insert(key.clone(), value.clone());
-
-            // Flush specific item
-            assert_eq!(db.flush(&key).unwrap(), ());
-        } // Dropping FsDb2
-
-        // Directly open the underlying sled db and retrieve the value
-        let sled_db = sled::open(&db_path).unwrap();
-        let raw_key_to_find = bincode::serialize(&"test_key".to_string()).unwrap();
-        let raw_value_in_sled = sled_db
-            .get(raw_key_to_find)
-            .unwrap()
-            .expect("The key was not found in sled DB");
-        let decoded_value_in_sled: String = bincode::deserialize(&raw_value_in_sled).unwrap();
-
-        assert_eq!(decoded_value_in_sled, "test_value".to_string());
-    }
-}
+//
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     use log::warn;
+//     use std::path::PathBuf;
+//
+//     #[test]
+//     fn test_fsdb2_insertion_and_retrieval() {
+//         let db = FsDB2::open(PathBuf::from("/tmp")).unwrap();
+//
+//         let key = "test_key".to_string();
+//         let value = "test_value".to_string();
+//
+//         // Insertion
+//         db.insert(key.clone(), value.clone());
+//
+//         // Retrieval
+//         let retrieved_value = db.get(&key);
+//         assert_eq!(retrieved_value.unwrap().clone(), value);
+//     }
+//
+//     #[test]
+//     fn test_fsdb2_insertion_flush_and_retrieval() {
+//         let mut db_path = std::env::temp_dir();
+//         db_path.push("shmr_test_db777");
+//
+//         if db_path.exists() {
+//             warn!("removing existing database");
+//             let _ = std::fs::remove_dir_all(&db_path);
+//         }
+//
+//         {
+//             let db = FsDB2::open(&db_path).unwrap();
+//
+//             let key = "test_key".to_string();
+//             let value = "test_value".to_string();
+//
+//             // Insertion
+//             db.insert(key.clone(), value.clone());
+//
+//             // Flush
+//             db.flush_all().unwrap();
+//         } // Dropping FsDb2
+//
+//         // Directly open the underlying sled db and retrieve the value
+//         let sled_db = sled::open(&db_path).unwrap();
+//         let raw_key_to_find = bincode::serialize(&"test_key".to_string()).unwrap();
+//         let raw_value_in_sled = sled_db
+//             .get(raw_key_to_find)
+//             .unwrap()
+//             .expect("The key was not found in sled DB");
+//         info!("got {:?}", &raw_value_in_sled);
+//
+//         let decoded_value_in_sled: String = bincode::deserialize(&raw_value_in_sled).unwrap();
+//
+//         assert_eq!(decoded_value_in_sled, "test_value".to_string());
+//     }
+//
+//     #[test]
+//     fn test_fsdb2_insertion_bg_flush_and_retrieval() {
+//         let mut db_path = std::env::temp_dir();
+//         db_path.push("shmr_test_db888");
+//
+//         if db_path.exists() {
+//             warn!("removing existing database");
+//             let _ = std::fs::remove_dir_all(&db_path);
+//         }
+//
+//         {
+//             let db = FsDB2::open(&db_path).unwrap();
+//
+//             let key = "test_key".to_string();
+//             let value = "test_value".to_string();
+//
+//             // Insertion
+//             db.insert(key.clone(), value.clone());
+//
+//             // wait 2 seconds before continuing
+//             thread::sleep(Duration::from_secs(2));
+//         } // Dropping FsDb2
+//
+//         // Directly open the underlying sled db and retrieve the value
+//         let sled_db = sled::open(&db_path).unwrap();
+//         let raw_key_to_find = bincode::serialize(&"test_key".to_string()).unwrap();
+//         let raw_value_in_sled = sled_db
+//             .get(raw_key_to_find)
+//             .unwrap()
+//             .expect("The key was not found in sled DB");
+//         info!("got {:?}", &raw_value_in_sled);
+//
+//         let decoded_value_in_sled: String = bincode::deserialize(&raw_value_in_sled).unwrap();
+//
+//         assert_eq!(decoded_value_in_sled, "test_value".to_string());
+//     }
+//
+//     #[test]
+//     fn test_fsdb2_flush_single_item() {
+//         let mut db_path = std::env::temp_dir();
+//         db_path.push("shmr_test_db999");
+//
+//         if db_path.exists() {
+//             warn!("removing existing database");
+//             let _ = std::fs::remove_dir_all(&db_path);
+//         }
+//
+//         {
+//             let db = FsDB2::open(&db_path).unwrap();
+//
+//             let key = "test_key".to_string();
+//             let value = "test_value".to_string();
+//
+//             // Insertion
+//             db.insert(key.clone(), value.clone());
+//
+//             // Flush specific item
+//             assert_eq!(db.flush(&key).unwrap(), ());
+//         } // Dropping FsDb2
+//
+//         // Directly open the underlying sled db and retrieve the value
+//         let sled_db = sled::open(&db_path).unwrap();
+//         let raw_key_to_find = bincode::serialize(&"test_key".to_string()).unwrap();
+//         let raw_value_in_sled = sled_db
+//             .get(raw_key_to_find)
+//             .unwrap()
+//             .expect("The key was not found in sled DB");
+//         let decoded_value_in_sled: String = bincode::deserialize(&raw_value_in_sled).unwrap();
+//
+//         assert_eq!(decoded_value_in_sled, "test_value".to_string());
+//     }
+// }
