@@ -207,7 +207,8 @@ mod tests {
         env_logger::init();
         let pools = get_pool();
 
-        let mut vf = VirtualFile::new().populate(pools.clone());
+        let mut vf = VirtualFile::new();
+        vf.populate(pools.clone());
         let data = random_data(8192);
 
         let written = vf.write(0, &data);
@@ -228,7 +229,9 @@ mod tests {
         let pools = get_pool();
         let amt = 1024 * 1024 * 2;
 
-        let mut vf = VirtualFile::new().populate(pools);
+        let mut vf = VirtualFile::new();
+        vf.populate(pools.clone());
+
         let data = random_data(amt);
 
         let written = vf.write(0, &data);

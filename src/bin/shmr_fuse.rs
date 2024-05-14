@@ -19,6 +19,10 @@ struct Args {
 
     #[arg(short, long)]
     config: PathBuf,
+
+    /// Use Buffered I/O
+    #[arg(short, long, default_value_t = false)]
+    buffered: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

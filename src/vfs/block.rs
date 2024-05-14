@@ -287,18 +287,17 @@ impl VirtualBlock {
                         r
                     })
                     .collect::<Vec<_>>();
-                trace!("shards: {:#?}", data_shards.len());
 
                 for _ in 0..(parity + (data - data_shards.len() as u8)) {
                     data_shards.push(vec![0; shard_size]);
                 }
 
-                let start = Instant::now();
+                // let start = Instant::now();
 
                 r.encode(&mut data_shards).unwrap();
 
-                let duration = start.elapsed();
-                debug!("Encoding duration: {:?}", duration);
+                // let duration = start.elapsed();
+                // debug!("Encoding duration: {:?}", duration);
 
                 for (i, shard) in data_shards.iter().enumerate() {
                     let _ = &shard_file_handles[i].write_all_at(shard.as_slice(), 0)?;
@@ -307,7 +306,6 @@ impl VirtualBlock {
                     let _ = &shard_file_handles[i].sync_all()?;
 
                 }
-
             }
         }
 
