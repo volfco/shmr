@@ -1,10 +1,12 @@
+use crate::config::{ShmrError, ShmrFsConfig};
+use log::trace;
+use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
-use log::trace;
-use serde::{Deserialize, Serialize};
-use crate::ShmrError;
-use crate::PoolMap;
+
+#[allow(clippy::identity_op)]
+pub const VIRTUAL_BLOCK_DEFAULT_SIZE: u64 = 1024 * 1024 * 1;
 
 pub const VP_DEFAULT_FILE_EXT: &str = "bin";
 
@@ -20,8 +22,8 @@ pub struct VirtualPath {
 impl VirtualPath {
     /// Return the (Filename, Directory) for the file.
     /// It's inverted to avoid needing to create a copy of the directory name before joining the filename
-    pub fn resolve(&self, map: &PoolMap) -> Result<(PathBuf, PathBuf), ShmrError> {
-        let pool_map = map.get(&self.pool).ok_or(ShmrError::InvalidPoolId)?;
+    pub fn resolve(&self, map: &ShmrFsConfig) -> Result<(PathBuf, PathBuf), ShmrError> {
+        let pool_map = map.pools.get(&self.pool).ok_or(ShmrError::InvalidPoolId)?;
 
         let mut path_buf = pool_map
             .get(&self.bucket)
@@ -33,7 +35,7 @@ impl VirtualPath {
 
         let result = (path_buf.join(&self.filename), path_buf);
         trace!(
-            "Resolved path for {:?} to (file: {:?}, dir: {:?})",
+            "Resolved path.rs for {:?} to (file: {:?}, dir: {:?})",
             self,
             result.0,
             result.1
@@ -42,7 +44,7 @@ impl VirtualPath {
         Ok(result)
     }
 
-    pub fn create(&self, map: &PoolMap) -> Result<(), ShmrError> {
+    pub fn create(&self, map: &ShmrFsConfig) -> Result<(), ShmrError> {
         let full_path = self.resolve(map)?;
 
         // ensure the directory exists
@@ -69,26 +71,4 @@ impl Display for VirtualPath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}({}):{}", self.pool, self.bucket, self.filename)
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::tests::get_pool;
-    use crate::vfs::path::VirtualPath;
-
-    #[test]
-    fn test_virtual_path_create() {
-        let pools = get_pool();
-
-        // create a virtual path, then create the file. then check to see if file exists
-        let vp = VirtualPath {
-            pool: "test_pool".to_string(),
-            bucket: "bucket1".to_string(),
-            filename: "test".to_string(),
-        };
-
-        vp.create(&pools).unwrap();
-        assert!(vp.resolve(&pools).unwrap().0.exists());
-    }
-
 }

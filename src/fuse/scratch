@@ -1,0 +1,147 @@
+
+    // fn setattr(
+    //     &mut self,
+    //     req: &Request<'_>,
+    //     ino: u64,
+    //     mode: Option<u32>,
+    //     uid: Option<u32>,
+    //     gid: Option<u32>,
+    //     size: Option<u64>,
+    //     atime: Option<TimeOrNow>,
+    //     mtime: Option<TimeOrNow>,
+    //     ctime: Option<SystemTime>,
+    //     _fh: Option<u64>,
+    //     crtime: Option<SystemTime>,
+    //     chgtime: Option<SystemTime>,
+    //     bkuptime: Option<SystemTime>,
+    //     flags: Option<u32>,
+    //     reply: ReplyAttr,
+    // ) {
+    //     trace!("FUSE({}) 'setattr' invoked on inode {}", req.unique(), ino);
+    //
+    //     let handle = self.inode_db.get(&ino);
+    //     if handle.is_none() {
+    //         reply.error(libc::ENOENT);
+    //         return;
+    //     }
+    //     let binding = handle.unwrap();
+    //     let mut inode = binding.lock().unwrap();
+    //
+    //     if mode.is_some() {
+    //         inode.perm = mode.unwrap() as u16;
+    //     }
+    //     if uid.is_some() {
+    //         inode.uid = uid.unwrap();
+    //     }
+    //     if gid.is_some() {
+    //         inode.gid = gid.unwrap();
+    //     }
+    //     if size.is_some() {
+    //         inode.size = size.unwrap();
+    //     }
+    //     if atime.is_some() {
+    //         match atime.unwrap() {
+    //             TimeOrNow::SpecificTime(time) => {
+    //                 let since_the_epoch = time
+    //                     .duration_since(UNIX_EPOCH)
+    //                     .expect("Time went backwards");
+    //                 inode.atime = (
+    //                     since_the_epoch.as_secs() as i64,
+    //                     since_the_epoch.subsec_nanos(),
+    //                 );
+    //             }
+    //             TimeOrNow::Now => {
+    //                 let (sec, nsec) = time_now();
+    //                 inode.atime = (sec, nsec);
+    //             }
+    //         }
+    //     }
+    //     if mtime.is_some() {
+    //         match atime.unwrap() {
+    //             TimeOrNow::SpecificTime(time) => {
+    //                 let since_the_epoch = time
+    //                     .duration_since(UNIX_EPOCH)
+    //                     .expect("Time went backwards");
+    //                 inode.atime = (
+    //                     since_the_epoch.as_secs() as i64,
+    //                     since_the_epoch.subsec_nanos(),
+    //                 );
+    //             }
+    //             TimeOrNow::Now => {
+    //                 let (sec, nsec) = time_now();
+    //                 inode.atime = (sec, nsec);
+    //             }
+    //         }
+    //     }
+    //     if ctime.is_some() {
+    //         let since_the_epoch = ctime
+    //             .unwrap()
+    //             .duration_since(UNIX_EPOCH)
+    //             .expect("Time went backwards");
+    //         inode.ctime = (
+    //             since_the_epoch.as_secs() as i64,
+    //             since_the_epoch.subsec_nanos(),
+    //         );
+    //     }
+    //     if crtime.is_some() {
+    //         let since_the_epoch = crtime
+    //             .unwrap()
+    //             .duration_since(UNIX_EPOCH)
+    //             .expect("Time went backwards");
+    //         inode.crtime = (
+    //             since_the_epoch.as_secs() as i64,
+    //             since_the_epoch.subsec_nanos(),
+    //         );
+    //     }
+    //     if flags.is_some() {
+    //         inode.flags = flags.unwrap();
+    //     }
+    //     if _fh.is_some() {
+    //         unimplemented!("_fh not implemented");
+    //     }
+    //     if chgtime.is_some() {
+    //         unimplemented!("chgtime not implemented");
+    //     }
+    //     if bkuptime.is_some() {
+    //         unimplemented!("bkuptime not implemented");
+    //     }
+    //
+    //     debug!(
+    //     "FUSE({}) 'setattr' success. inode {} updated",
+    //     req.unique(),
+    //     ino
+    // );
+    //
+    //     reply.attr(&Duration::new(0, 0), &inode.to_fileattr());
+    //     drop(inode);
+    // }
+
+    // /// Create a file node
+    // // This is called for creation of all non-directory, non-symlink nodes. If the filesystem defines a create() method, then for regular files that will be called instead.
+    // fn mknod(
+    //     &mut self,
+    //     req: &Request<'_>,
+    //     parent: u64,
+    //     name: &OsStr,
+    //     mode: u32,
+    //     umask: u32,
+    //     rdev: u32,
+    //     reply: ReplyEntry,
+    // ) {
+    //     trace!(
+    //     "FUSE({}) 'mknod' invoked for parent {} with name {:?}",
+    //     req.unique(),
+    //     parent,
+    //     name
+    // );
+    //     match self.create(req, parent, name, mode, umask, rdev) {
+    //         Ok(inode) => {
+    //             let handle = self.inode_db.get(&inode).unwrap();
+    //             let inode = handle.lock().unwrap();
+    //             reply.entry(&Duration::new(0, 0), &inode.to_fileattr(), 0);
+    //         }
+    //         Err(e) => {
+    //             reply.error(e);
+    //         }
+    //     }
+    // }

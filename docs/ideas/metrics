@@ -1,0 +1,5 @@
+Metrics Directory
+
+located at "<mount point>/_stat"
+
+Can have virtual files that contain the metric information and graphs.

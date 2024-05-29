@@ -2,19 +2,50 @@ mount_dir: ./mnt
 metadata_dir: ./metadata
 pools:
   pool0:
-    p0: ./pool0
+    p0:
+      path: ./pool0
   pool1:
-    d0: ./pool1/0
-    d1: ./pool1/1
+    d0:
+      path: ./pool1/0
+    d1:
+      path: ./pool1/1
 
   pool2:
-    sda: /mnt/sda
-    sdb: /mnt/sdb
-    sdc: /mnt/sdc
-    sdd: /mnt/sdd
-    sde: /mnt/sde
-    sdf: /mnt/sdf
-    sdg: /mnt/sdg
-    sdh: /mnt/sdh
+    sda:
+      path: /mnt/sda
+    sdb:
+      path: /mnt/sdb
+    sdc:
+      path: /mnt/sdc
+    sdd:
+      path: /mnt/sdd
+    sde:
+      path: /mnt/sde
+    sdf:
+      path: /mnt/sdf
+    sdg:
+      path: /mnt/sdg
+    sdh:
+      path: /mnt/sdh
 
 write_pool: pool0
+
+memory:
+  cache_size: 1GiB
+
+page_cache:
+  enabled: true
+  # Fully Load
+  full_load_under: 8MB
+
+sqlite_options:
+  # maximum size of database page cache
+  main.cache_size: 256MB
+  # Memory-mapped File I/O size
+  main.mmap_size: 256MB
+  cell_size_check: "true"
+#  main.synchronous: 0
+  # Store temp tables & indices in memory
+  temp_store: 2
+  # # of threads to launch. Default is 0 (which is only single threaded)
+  threads: 4

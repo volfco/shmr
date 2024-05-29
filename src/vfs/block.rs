@@ -1,22 +1,22 @@
-use std::{cmp, thread};
-use std::fs::{File, OpenOptions};
-use std::io::Read;
-use std::os::unix::prelude::FileExt;
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use crate::config::{ShmrError, ShmrFsConfig};
+use crate::vfs::calculate_shard_size;
+use crate::vfs::path::{VirtualPath, VP_DEFAULT_FILE_EXT};
+use crate::worker::split_duration;
 use log::{debug, trace, warn};
 use reed_solomon_erasure::galois_8::ReedSolomon;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
-use crate::ShmrError;
-use crate::PoolMap;
-use crate::vfs::path::{VirtualPath, VP_DEFAULT_FILE_EXT};
+use std::default::Default;
+use std::fmt;
+use std::fs::{File, OpenOptions};
+use std::io::Read;
+use std::os::unix::prelude::FileExt;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
+use std::{cmp, thread};
 
-#[allow(clippy::identity_op)]
-pub const VIRTUAL_BLOCK_DEFAULT_SIZE: usize = 1024 * 1024 * 1;
-const VIRTUAL_BLOCK_FLUSH_INTERVAL: u64 = 500; // ms
+pub const VIRTUAL_BLOCK_FLUSH_INTERVAL: u64 = 500; // ms
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum BlockTopology {
@@ -28,6 +28,67 @@ pub enum BlockTopology {
     Erasure(u8, u8, u8),
 }
 
+impl fmt::Display for BlockTopology {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            BlockTopology::Single => write!(f, "Single"),
+            BlockTopology::Mirror(n) => write!(f, "Mirror({})", n),
+            BlockTopology::Erasure(v, ds, ps) => write!(f, "Erasure({}, {}, {})", v, ds, ps),
+        }
+    }
+}
+impl From<BlockTopology> for String {
+    fn from(_value: BlockTopology) -> Self {
+        todo!()
+    }
+}
+
+impl TryFrom<String> for BlockTopology {
+    type Error = ();
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let parts: Vec<&str> = value.splitn(2, '(').collect();
+        let (name, arg) = (parts[0], parts.get(1).unwrap_or(&""));
+        match name {
+            "Single" => Ok(BlockTopology::Single),
+            "Mirror" => {
+                let n: u8 = arg.trim_end_matches(')').parse().map_err(|_| ())?;
+                Ok(BlockTopology::Mirror(n))
+            }
+            "Erasure" => {
+                let params: Vec<&str> = arg.splitn(3, ',').collect();
+                let v: u8 = params[0].trim().parse().map_err(|_| ())?;
+                let ds: u8 = params
+                    .get(1)
+                    .unwrap_or(&"")
+                    .trim()
+                    .parse()
+                    .map_err(|_| ())?;
+                let ps: u8 = params
+                    .get(2)
+                    .unwrap_or(&"")
+                    .trim_end_matches(')')
+                    .parse()
+                    .map_err(|_| ())?;
+                Ok(BlockTopology::Erasure(v, ds, ps))
+            }
+            _ => Err(()),
+        }
+    }
+}
+
+// use Intel QAT, AMD AOCL-Compression (https://github.com/amd/aocl-compression)
+// ref: https://git.sr.ht/~quf/rust-compression-comparison
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum BlockCompression {
+    Lz4(u8),
+    Lz4Hc(u8),
+    Zlib,
+    Zstd(u8),
+    Brotli,
+    Lzma,
+}
+
 /// On read, the contents are read and stored in the buffer.
 ///
 /// If the buffer is enabled, the buffer won't be flushed after ever write. Otherwise the buffer is
@@ -37,17 +98,21 @@ pub enum BlockTopology {
 /// memory without dropping the entire object.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct VirtualBlock {
-    pub(crate) uuid: Uuid,
+    /// Parent Inode.
+    pub ino: u64,
+
+    /// Block Number
+    pub idx: u64,
     /// Size of the StorageBlock.
     /// This is a fixed size, and represents the maximum amount of data that can be stored in this
-    /// block. On-disk size might be a bit larger (or smaller) than this value.
-    size: usize,
+    /// vfs. On-disk size might be a bit larger (or smaller) than this value.
+    pub size: u64,
 
     /// Layout of this StorageBlock
-    topology: BlockTopology,
+    pub topology: BlockTopology,
 
     /// Shards that make up this block.
-    shards: Vec<VirtualPath>,
+    pub shards: Vec<VirtualPath>,
 
     /// File handles for each Shard. Stored in the same order as in shards
     #[serde(skip)]
@@ -66,20 +131,19 @@ pub struct VirtualBlock {
     // none, because poolmap will default to a LazyLock that can be populated before the file is read from the database.
     // bit of a hack to give the poolmap a default value, but it works.
     #[serde(skip)]
-    pool_map: Option<PoolMap>,
+    pool_map: Option<ShmrFsConfig>,
 
     #[serde(skip)]
     run: Arc<Mutex<bool>>,
 
     #[serde(skip)]
-    run_handle: Arc<Mutex<Option<JoinHandle<()>>>>
-
-    // TODO Add an IOTracker for the block as well?
+    run_handle: Arc<Mutex<Option<JoinHandle<()>>>>, // TODO Add an IOTracker for the block as well?
 }
 impl Default for VirtualBlock {
     fn default() -> Self {
         VirtualBlock {
-            uuid: Uuid::new_v4(),
+            ino: 0,
+            idx: 0,
             size: 0,
             topology: BlockTopology::Single,
             shards: Vec::new(),
@@ -94,7 +158,10 @@ impl Default for VirtualBlock {
     }
 }
 impl VirtualBlock {
-    pub fn populate(&mut self, map: PoolMap) {
+    pub fn new() -> Self {
+        Default::default()
+    }
+    pub fn populate(&mut self, map: ShmrFsConfig) {
         self.pool_map = Some(map);
     }
 
@@ -132,39 +199,43 @@ impl VirtualBlock {
         Ok(())
     }
 
-    pub fn size(&self) -> usize {
+    pub fn size(&self) -> u64 {
         self.size
     }
 
-    pub fn new(pools: &PoolMap, size: usize, topology: BlockTopology) -> Result<Self, ShmrError> {
-        let uuid = Uuid::new_v4();
-        debug!("[{}] creating new VirtualBlock", uuid);
+    pub fn create(
+        ino: u64,
+        idx: u64,
+        config: &ShmrFsConfig,
+        size: u64,
+        topology: BlockTopology,
+    ) -> Result<Self, ShmrError> {
+        debug!("[{:#016x}] creating new VirtualBlock", idx);
 
         let (needed_shards, ident) = match &topology {
             BlockTopology::Single => (1, "single".to_string()),
             BlockTopology::Mirror(n) => (*n as usize, "mirror".to_string()),
-            BlockTopology::Erasure(_, d, p) => ((d + p) as usize, format!("ec{}{}", d, p))
+            BlockTopology::Erasure(_, d, p) => ((d + p) as usize, format!("ec{}{}", d, p)),
         };
 
-        let mut buckets = pools.select_buckets(needed_shards)?;
+        let mut buckets = config.select_buckets(&config.write_pool, needed_shards)?;
         let mut shards = vec![];
         for i in 0..needed_shards {
             let vpf = VirtualPath {
-                pool: pools.write_pool(),
+                pool: config.write_pool.clone(),
                 bucket: buckets.pop().unwrap(),
-                filename: format!(
-                    "{}_{}_{}.{}",
-                    uuid, ident, i, VP_DEFAULT_FILE_EXT
-                ),
+                // need to add some randomness
+                filename: format!("{}:{}_{}_{}.{}", ino, idx, ident, i, VP_DEFAULT_FILE_EXT),
             };
             // create the backing file while we're initializing everything
-            vpf.create(pools)?;
+            vpf.create(config)?;
 
             shards.push(vpf);
         }
 
         Ok(Self {
-            uuid,
+            ino,
+            idx,
             size,
             topology,
             shards,
@@ -172,7 +243,7 @@ impl VirtualBlock {
             buffered: false,
             buffer_loaded: Arc::new(AtomicBool::new(false)),
             buffer: Arc::new(Mutex::new(vec![])),
-            pool_map: Some(pools.clone()),
+            pool_map: Some(config.clone()),
             run: Arc::new(Mutex::new(false)),
             run_handle: Arc::new(Mutex::new(None)),
         })
@@ -180,17 +251,25 @@ impl VirtualBlock {
 
     /// Read from the VirtualBlock, at the given position, until the buffer is full
     pub fn read(&self, pos: usize, buf: &mut [u8]) -> Result<usize, ShmrError> {
+        debug!(
+            "[{:#016x}] reading {} bytes at {}",
+            self.idx,
+            buf.len(),
+            pos
+        );
         if buf.is_empty() {
-            debug!("[{}] read was given an empty buffer", self.uuid);
+            debug!("[{:#016x}] read was given an empty buffer", self.idx);
             return Ok(0);
         }
 
         if !self.buffer_loaded.load(Ordering::Relaxed) {
-            trace!("[{}] buffer is not populated. loading from disk.", self.uuid);
+            trace!(
+                "[{:#016x}] buffer is not populated. loading from disk.",
+                self.idx
+            );
             // populate the buffer with the contents of the shard(s)
             self.load_block()?;
             // flag the buffer as loaded
-
         }
 
         let data = self.buffer.lock().unwrap();
@@ -203,11 +282,17 @@ impl VirtualBlock {
         Ok(read_bytes)
     }
 
-    pub fn write(&self, pos: usize, buf: &[u8]) -> Result<usize, ShmrError> {
+    pub fn write(&self, pos: u64, buf: &[u8]) -> Result<usize, ShmrError> {
+        trace!(
+            "[{:#016x}] writing {} bytes at {}",
+            self.idx,
+            buf.len(),
+            pos
+        );
         let written = buf.len();
 
         // make sure we're not writing past the end of the block
-        if pos + buf.len() > self.size {
+        if pos + buf.len() as u64 > self.size {
             return Err(ShmrError::OutOfSpace);
         }
 
@@ -219,12 +304,12 @@ impl VirtualBlock {
             // only resize it to the size of the incoming buffer, not the size of the block. One of
             // the reasons is that if we zero-fill the entire buffer, we will write it all to disk, which will take up extra space.
             // TODO this might have a big enough performance impact to warrant a better solution.
-            let ending_pos = pos + buf.len();
+            let ending_pos = pos as usize + buf.len();
             if buffer.len() < ending_pos {
                 buffer.resize(ending_pos, 0);
             }
 
-            buffer[pos..ending_pos].copy_from_slice(buf);
+            buffer[(pos as usize)..ending_pos].copy_from_slice(buf);
         }
 
         if !self.buffered {
@@ -239,10 +324,12 @@ impl VirtualBlock {
         {
             let shard_file_handles = self.shard_handles.lock().unwrap();
             if self.shards.len() != shard_file_handles.len() {
-
                 drop(shard_file_handles); // dumb
 
-                warn!("[{}] shard file handles are not opened at sync time", self.uuid);
+                warn!(
+                    "[{:#016x}] shard file handles are not opened at sync time",
+                    self.idx
+                );
                 self.open_shards()?;
             }
         }
@@ -274,7 +361,7 @@ impl VirtualBlock {
             }
             BlockTopology::Erasure(_, data, parity) => {
                 let r = ReedSolomon::new(data.into(), parity.into())?;
-                let shard_size = calculate_shard_size(self.size, data as usize);
+                let shard_size = calculate_shard_size(self.size, data);
 
                 let mut data_shards = buffer
                     .chunks(shard_size)
@@ -306,13 +393,11 @@ impl VirtualBlock {
                 }
                 for i in 0..data_shards.len() {
                     let _ = &shard_file_handles[i].sync_all()?;
-
                 }
-
             }
         }
 
-        debug!("[{}] successfully flushed buffer to disk", self.uuid);
+        // debug!("[{:#016x}] successfully flushed buffer to disk", self.idx);
 
         Ok(())
     }
@@ -321,19 +406,22 @@ impl VirtualBlock {
     fn open_shards(&self) -> Result<(), ShmrError> {
         let mut shard_file_handles = self.shard_handles.lock().unwrap();
         if self.shards.len() == shard_file_handles.len() {
-            debug!("[{}] shards are already opened. skipping.", self.uuid);
+            debug!("[{:#016x}] shards are already opened. skipping.", self.idx);
             return Ok(());
         }
 
         let pools = match self.pool_map {
             Some(ref p) => p,
-            None => panic!("pool_map has not been populated. Unable to perform operation.")
+            None => panic!("pool_map has not been populated. Unable to perform operation."),
         };
 
         for shard in &self.shards {
             let shard_path = shard.resolve(pools)?;
-            let shard_file = OpenOptions::new().read(true).write(true).open(&shard_path.0)?;
-            trace!("[{}] opening {:?}", self.uuid, shard_path.0);
+            let shard_file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&shard_path.0)?;
+            trace!("[{:#016x}] opening {:?}", self.idx, shard_path.0);
             shard_file_handles.push(shard_file);
         }
 
@@ -347,15 +435,16 @@ impl VirtualBlock {
         let mut buffer = self.buffer.lock().unwrap();
 
         // because Vec has a length of zero by default, and reading a file requires a buffer of a
-        // certain size,
-        if buffer.len() < self.size {
-            buffer.resize(self.size, 0);
+        // certain size
+        let size = self.size as usize;
+        if buffer.len() < size {
+            buffer.resize(size, 0);
         }
 
         match self.topology {
             BlockTopology::Single => {
                 let read_amt = &shard_file_handles[0].read(&mut buffer)?;
-                debug!("[{}] read {} bytes from 1 shard", self.uuid, read_amt);
+                debug!("[{:#016x}] read {} bytes from 1 shard", self.idx, read_amt);
             }
             BlockTopology::Mirror(_) => {
                 todo!("Implement Mirrored Read")
@@ -363,20 +452,23 @@ impl VirtualBlock {
             BlockTopology::Erasure(version, data, parity) => match version {
                 1 => {
                     let r = ReedSolomon::new(data.into(), parity.into())?;
-                    let shard_size = calculate_shard_size(self.size, data as usize);
+                    let shard_size = calculate_shard_size(self.size, data);
                     let mut missing_shards = false;
-                    let mut ec_shards: Vec<Option<Vec<u8>>> = shard_file_handles.iter().map(|mut h| {
-                        let mut buffer = vec![];
-                        let read_op = h.read_to_end(&mut buffer);
-                        if read_op.is_err() {
-                            missing_shards = true;
-                            return None;
-                        } else if read_op.unwrap() != shard_size {
-                            missing_shards = true;
-                            buffer.resize(shard_size, 0);
-                        }
-                        Some(buffer)
-                    }).collect();
+                    let mut ec_shards: Vec<Option<Vec<u8>>> = shard_file_handles
+                        .iter()
+                        .map(|mut h| {
+                            let mut buffer = vec![];
+                            let read_op = h.read_to_end(&mut buffer);
+                            if read_op.is_err() {
+                                missing_shards = true;
+                                return None;
+                            } else if read_op.unwrap() != shard_size {
+                                missing_shards = true;
+                                buffer.resize(shard_size, 0);
+                            }
+                            Some(buffer)
+                        })
+                        .collect();
 
                     if missing_shards {
                         warn!("missing data shards. Attempting to reconstruct.");
@@ -389,7 +481,8 @@ impl VirtualBlock {
                         // TODO Do something with the reconstructed data, so we don't need to reconstruct this block again
                     }
 
-                    let ec_shards: Vec<Vec<u8>> = ec_shards.into_iter().map(|x| x.unwrap()).collect();
+                    let ec_shards: Vec<Vec<u8>> =
+                        ec_shards.into_iter().map(|x| x.unwrap()).collect();
                     let mut ec_data = vec![];
 
                     for shard in ec_shards.iter() {
@@ -397,10 +490,10 @@ impl VirtualBlock {
                     }
 
                     // this should ignore any padding at the end of the ec_data slice
-                    buffer.copy_from_slice(&ec_data[..self.size]);
+                    buffer.copy_from_slice(&ec_data[..self.size as usize]);
                 }
-                _ => unimplemented!()
-            }
+                _ => unimplemented!(),
+            },
         }
 
         self.buffer_loaded.store(true, Ordering::Relaxed);
@@ -430,17 +523,20 @@ impl VirtualBlock {
     }
 }
 
-
 fn flushomatic(block: VirtualBlock) {
-    let (a, b) = crate::kernel::tasks::split_duration(Duration::from_millis(VIRTUAL_BLOCK_FLUSH_INTERVAL));
-    debug!("[{}] starting worker. timings: {:?}/{:?}", block.uuid, &a, &b);
+    eprintln!("bing bong");
+    let (a, b) = split_duration(Duration::from_millis(VIRTUAL_BLOCK_FLUSH_INTERVAL));
+    debug!(
+        "[{:#016x}] starting worker. timings: {:?}/{:?}",
+        block.idx, &a, &b
+    );
     loop {
         thread::sleep(a);
         {
             let run = block.run.lock().unwrap();
             if *run {
                 if let Err(e) = block.sync_data() {
-                    warn!("[{}] error syncing data: {:?}", block.uuid, e);
+                    warn!("[{:#016x}] error syncing data: {:?}", block.idx, e);
                 }
             }
         }
@@ -448,45 +544,27 @@ fn flushomatic(block: VirtualBlock) {
     }
 }
 
-// fn write_into(buf: &mut [u8], writes: &mut [(usize, Vec<u8>)], offset: usize) {
-//     let write_buf_len = buf.len();
-//     writes
-//         .iter()
-//         .filter(|(start, contents)| offset <= start + contents.len())
-//         .for_each(|(start, contents)| {
-//             let content_start = offset.saturating_sub(*start);
-//             let content_end = cmp::min(contents.len(), write_buf_len);
-//             let buf_start = start.saturating_sub(offset);
-//             let buf_end = buf_start + content_end - content_start;
-//             buf[buf_start..buf_end].copy_from_slice(&contents[content_start..content_end]);
-//         });
-// }
-
-fn calculate_shard_size(length: usize, data_shards: usize) -> usize {
-    (length as f32 / data_shards as f32).ceil() as usize
-}
-
 #[cfg(test)]
 mod tests {
+    use crate::config::random_data;
+    use crate::tests::get_shmr_config;
+    use crate::vfs::block::{BlockTopology, VirtualBlock};
     use std::fs::File;
     use std::io::Read;
     use std::os::unix::prelude::MetadataExt;
     use std::sync::atomic::Ordering;
-    use crate::random_data;
-    use crate::tests::get_pool;
-    use crate::vfs::block::VirtualBlock;
 
     #[test]
     fn test_virtual_block_new_block() {
-        let pools = get_pool();
+        let cfg = get_shmr_config();
 
-        let block = VirtualBlock::new(&pools, 1024, crate::vfs::block::BlockTopology::Single);
+        let block = VirtualBlock::create(1, 0, &cfg, 1024, BlockTopology::Single);
         assert!(block.is_ok());
 
         let block = block.unwrap();
 
         for shard in &block.shards {
-            let path = shard.resolve(&pools);
+            let path = shard.resolve(&cfg);
             assert!(path.is_ok());
             assert!(path.unwrap().0.exists())
         }
@@ -494,14 +572,14 @@ mod tests {
 
     #[test]
     fn test_virtual_block_unbuffered() {
-        let pools = get_pool();
+        let cfg = get_shmr_config();
 
-        let block = VirtualBlock::new(&pools, 1024, crate::vfs::block::BlockTopology::Single);
+        let block = VirtualBlock::create(3, 0, &cfg, 1024, BlockTopology::Single);
         assert!(block.is_ok());
 
         let block = block.unwrap();
 
-        let shard_path = block.shards[0].resolve(&pools).unwrap();
+        let shard_path = block.shards[0].resolve(&cfg).unwrap();
 
         let data = random_data(500);
         let written = block.write(0, &data);
@@ -527,13 +605,13 @@ mod tests {
 
     #[test]
     fn test_virtual_block_buffered() {
-        let pools = get_pool();
+        let cfg = get_shmr_config();
 
-        let block = VirtualBlock::new(&pools, 1024, crate::vfs::block::BlockTopology::Single);
+        let block = VirtualBlock::create(5, 0, &cfg, 1024, BlockTopology::Single);
         assert!(block.is_ok());
 
         let block = block.unwrap().buffered();
-        let shard_path = block.shards[0].resolve(&pools).unwrap();
+        let shard_path = block.shards[0].resolve(&cfg).unwrap();
 
         assert!(block.buffered);
 
@@ -582,9 +660,9 @@ mod tests {
 
     #[test]
     fn test_virtual_block_erasure_buffered() {
-        let pools = get_pool();
+        let cfg = get_shmr_config();
 
-        let block = VirtualBlock::new(&pools, 1024, crate::vfs::block::BlockTopology::Erasure(1, 3, 2));
+        let block = VirtualBlock::create(7, 0, &cfg, 1024, BlockTopology::Single);
         assert!(block.is_ok());
 
         let block = block.unwrap();
@@ -599,6 +677,4 @@ mod tests {
         assert!(read.is_ok(), "{:?}", read.err());
         assert_eq!(read_buf, &data[..250]);
     }
-
-
 }
