@@ -519,7 +519,7 @@ impl Filesystem for ShmrFs {
                 reply.error(libc::ENOENT); // TODO Is this the right error
             }
             Some(entry) => {
-                if let Err(e) = entry.sync_data() {
+                if let Err(e) = entry.sync_data(true) {
                     error!("FUSE({}) Error syncing data: {:?}", req.unique(), e);
                     reply.error(libc::EIO);
                     return;

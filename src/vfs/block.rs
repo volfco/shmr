@@ -4,13 +4,12 @@ use crate::vfs::path::{VirtualPath, VP_DEFAULT_FILE_EXT};
 use log::{debug, trace, warn};
 use reed_solomon_erasure::galois_8::ReedSolomon;
 use serde::{Deserialize, Serialize};
-use std::cmp;
+use std::{cmp, mem};
 use std::default::Default;
 use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::Read;
 use std::os::unix::prelude::FileExt;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -119,6 +118,12 @@ pub struct VirtualBlock {
     #[serde(skip)]
     shard_handles: Arc<Mutex<Vec<(VirtualPath, File)>>>,
 
+    #[serde(skip)]
+    shard_loaded: Arc<AtomicBool>,
+
+    #[serde(skip)]
+    should_flush: Arc<AtomicBool>,
+
     // stateful fields.
     #[serde(skip)]
     buffer_loaded: Arc<AtomicBool>,
@@ -140,6 +145,8 @@ impl Default for VirtualBlock {
             topology: BlockTopology::Single,
             shards: Vec::new(),
             shard_handles: Arc::new(Mutex::new(Vec::new())),
+            shard_loaded: Arc::new(AtomicBool::new(false)),
+            should_flush: Arc::new(AtomicBool::new(false)),
             buffer_loaded: Arc::new(AtomicBool::new(false)),
             buffer: Arc::new(Mutex::new(Vec::new())),
             pool_map: None,
@@ -196,6 +203,8 @@ impl VirtualBlock {
             shards,
             shard_handles: Arc::new(Default::default()),
             buffer_loaded: Arc::new(AtomicBool::new(false)),
+            shard_loaded: Arc::new(AtomicBool::new(false)),
+            should_flush: Arc::new(AtomicBool::new(false)),
             buffer: Arc::new(Mutex::new(vec![])),
             pool_map: Some(config.clone()),
         })
@@ -289,28 +298,31 @@ impl VirtualBlock {
         //     );
         //     self.sync_data()?;
         // }
+        self.should_flush.store(false, Ordering::Relaxed);
 
         Ok(written)
     }
 
     /// Sync-Flush- the buffers to disk.
-    pub fn sync_data(&self) -> Result<(), ShmrError> {
-        debug!(
-                "[{}:{:#016x}] syncing buffer",
-                self.ino,
-                self.idx,
-            );
-        self.open_shards()?;
+    pub fn sync_data(&self, force: bool) -> Result<(), ShmrError> {
+        // Don't sync if we're not being forced to, and no writes have occured
+        if !force && !self.should_flush.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+
+        // debug!(
+        //         "[{}:{:#016x}] syncing buffer",
+        //         self.ino,
+        //         self.idx,
+        //     );
+        if !self.shard_loaded.load(Ordering::Relaxed) {
+            self.open_handles()?;
+        }
 
         let shard_file_handles = self.shard_handles.lock().unwrap();
         let buffer = self.buffer.lock().unwrap();
 
         if buffer.is_empty() {
-            trace!(
-                "[{}:{:#016x}] sync_data called on block with an empty buffer",
-                self.ino,
-                self.idx,
-            );
             return Ok(());
         }
 
@@ -377,39 +389,27 @@ impl VirtualBlock {
             self.idx
         );
 
+        self.should_flush.store(false, Ordering::Relaxed);
+
         Ok(())
     }
 
-    // TODO Something isn't right here. The 1st conditional doesn't catch sometimes?
-    fn open_shards(&self) -> Result<(), ShmrError> {
-        let mut shard_file_handles = self.shard_handles.lock().unwrap();
-        if self.shards.len() == shard_file_handles.len() {
-            trace!(
-                "[{}:{:#016x}] shards are already opened. skipping.",
-                self.ino, self.idx
-            );
-            return Ok(());
-        }
-
+    /// Open the Shard File Handles, closing any existing handles.
+    fn open_handles(&self) -> Result<(), ShmrError> {
         let pools = match self.pool_map {
             Some(ref p) => p,
             None => panic!("pool_map has not been populated. Unable to perform operation."),
         };
 
+        let mut shard_file_handles = self.shard_handles.lock().unwrap();
+        if shard_file_handles.len() > 0 {
+            debug!("[{}:{:#016x}] dropping existing handles", self.ino, self.idx);
+            // take the contents of the Vec and just throw them on the ground
+            // https://www.youtube.com/watch?v=gAYL5H46QnQ
+            let _ = mem::take(&mut *shard_file_handles);
+        }
+
         for shard in &self.shards {
-
-            // scan shard_handles to make sure the VirtualPath is not already opened
-            if shard_file_handles.iter().any(|(path, _)| path == shard) {
-                warn!(
-                    "[{}:{:#016x}] shard already opened. {}. {}.",
-                    self.ino,
-                    self.idx,
-                    self.shards.len(),
-                    shard_file_handles.len()
-                );
-                continue;
-            }
-
             let shard_path = shard.resolve(pools)?;
             let shard_file = OpenOptions::new()
                 .read(true)
@@ -425,12 +425,16 @@ impl VirtualBlock {
             shard_file_handles.push((shard.clone(), shard_file));
         }
 
+        self.shard_loaded.store(true, Ordering::Relaxed);
+
         Ok(())
     }
 
     /// Read the entire contents of the VirtualBlock into the buffer
     fn load_block(&self) -> Result<(), ShmrError> {
-        self.open_shards()?;
+        if !self.shard_loaded.load(Ordering::Relaxed) {
+            self.open_handles()?;
+        }
         let mut shard_file_handles = self.shard_handles.lock().unwrap();
         let mut buffer = self.buffer.lock().unwrap();
 
@@ -461,7 +465,7 @@ impl VirtualBlock {
                     let mut missing_shards = false;
                     let mut ec_shards: Vec<Option<Vec<u8>>> = shard_file_handles
                         .iter_mut()
-                        .map(|mut h| {
+                        .map(|h| {
                             let mut buffer = vec![];
                             let read_op = h.1.read_to_end(&mut buffer);
                             if read_op.is_err() {
@@ -507,7 +511,7 @@ impl VirtualBlock {
 
     pub fn drop_buffer(&self) -> Result<(), ShmrError> {
         // sync before dropping the buffer
-        self.sync_data()?;
+        self.sync_data(true)?;
 
         let mut buffer = self.buffer.lock().unwrap();
         *buffer = vec![];
@@ -521,9 +525,11 @@ impl VirtualBlock {
         let mut handles = self.shard_handles.lock().unwrap();
 
         // sync before dropping handles
-        self.sync_data()?;
+        self.sync_data(true)?;
 
         handles.clear();
+
+        self.shard_loaded.store(false, Ordering::Relaxed);
         Ok(())
     }
 }
@@ -569,6 +575,7 @@ mod tests {
         let written = block.write(0, &data);
         assert!(written.is_ok(), "{:?}", written.err());
 
+        block.sync_data(true).unwrap();
         assert_eq!(shard_path.0.metadata().unwrap().size() as usize, data.len());
 
         // drop the buffers and ensure they are empty
@@ -594,10 +601,8 @@ mod tests {
         let block = VirtualBlock::create(5, 0, &cfg, 1024, BlockTopology::Single);
         assert!(block.is_ok());
 
-        let block = block.unwrap().buffered();
+        let block = block.unwrap();
         let shard_path = block.shards[0].resolve(&cfg).unwrap();
-
-        assert!(block.buffered);
 
         let data = random_data(420);
         let written = block.write(0, &data);
@@ -632,7 +637,7 @@ mod tests {
 
         assert_eq!(shard_path.0.metadata().unwrap().size() as usize, 0);
 
-        block.sync_data().unwrap();
+        block.sync_data(true).unwrap();
 
         // check if the first 420 bytes are correct
         let mut read_buf = vec![0; 420];

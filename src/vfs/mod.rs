@@ -88,9 +88,9 @@ impl VirtualFile {
     }
 
     /// Sync the data on all blocks
-    pub fn sync_data(&self) -> Result<(), ShmrError> {
+    pub fn sync_data(&self, force: bool) -> Result<(), ShmrError> {
         for block in self.blocks.iter() {
-            block.sync_data()?;
+            block.sync_data(force)?;
         }
         Ok(())
     }
@@ -268,8 +268,8 @@ mod tests {
                 mount_dir: Default::default(),
                 pools,
                 write_pool: "test_pool".to_string(),
+                sqlite_options: Default::default(),
             }),
-            buffered: false,
             io_stat: IOTracker::default(),
         }
     }
@@ -284,7 +284,7 @@ mod tests {
         let written = vf.write(0, &data);
         assert_eq!(written.unwrap(), 7000);
 
-        assert_eq!(vf.size(), 7000);
+        assert_eq!(vf.size, 7000);
         assert_eq!(vf.blocks.len(), 1);
 
         let mut buf = vec![0u8; 7000];

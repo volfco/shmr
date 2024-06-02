@@ -87,7 +87,7 @@ impl ShmrFs {
             None => warn!("attempted to release a non-existent filehandle ({}).", fh),
             Some(inner) => {
                 let vf = self.file_cache.get(&inner.1).unwrap();
-                vf.sync_data()?;
+                vf.sync_data(false)?;
             }
         }
         Ok(())
@@ -130,6 +130,7 @@ pub mod tests {
             mount_dir: Default::default(),
             pools,
             write_pool: "test_pool".to_string(),
+            sqlite_options: Default::default(),
         }
     }
 }

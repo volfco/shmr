@@ -1,7 +1,6 @@
 use crate::config::ShmrError;
 use crate::fuse::types::IFileType;
 use fuser::{FileAttr, Request, TimeOrNow};
-use log::debug;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{named_params, params};
@@ -91,8 +90,6 @@ impl InodeDB {
                 flags: 0,
             })
         })?;
-
-        debug!("FileAttr for ino {}. {:?}", ino, result);
 
         Ok(result)
     }

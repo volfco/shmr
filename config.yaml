@@ -35,14 +35,16 @@ pools:
     sdh:
       path: /mnt/sdh
 
+rlimit: 10240
+
 cache:
   max_memory: 1GiB
 
 sqlite_options:
   # maximum size of database page cache
-  main.cache_size: 256MB
+  cache_size: 256MB
   # Memory-mapped File I/O size
-  main.mmap_size: 256MB
+  mmap_size: 256MB
   cell_size_check: "true"
 #  main.synchronous: 0
   # Store temp tables & indices in memory

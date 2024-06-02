@@ -25,7 +25,7 @@ impl FlushMaster {
 impl WorkerTask for FlushMaster {
     fn execute(&self) {
         for entry in self.file_cache.iter() {
-            if let Err(e) = entry.sync_data() {
+            if let Err(e) = entry.sync_data(false) {
                 error!("[{}] error occurred during data sync. {:?}", entry.ino, e);
             }
 
