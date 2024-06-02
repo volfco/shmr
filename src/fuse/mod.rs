@@ -69,7 +69,7 @@ impl Filesystem for ShmrFs {
             Ok(ino) => match ino {
                 Some(ino) => ino,
                 None => {
-                    warn!(
+                    debug!(
                         "FUSE({}) Inode {} has no entry for {}",
                         req.unique(),
                         parent,
@@ -167,7 +167,6 @@ impl Filesystem for ShmrFs {
             parent,
             name
         );
-        let mode = mode as u16;
 
         // check if directory already contains an entry for the given name
         match self

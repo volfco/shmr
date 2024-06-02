@@ -189,12 +189,12 @@ impl InodeDB {
         let mut conn = self.conn.get()?;
         let tx = conn.transaction()?;
 
-        if let Some(mode) = mode {
-            tx.execute(
-                "UPDATE inode SET mode = ?2 WHERE inode = ?1",
-                params![ino, mode],
-            )?;
-        }
+        // if let Some(mode) = mode {
+        //     tx.execute(
+        //         "UPDATE inode SET mode = ?2 WHERE inode = ?1",
+        //         params![ino, mode],
+        //     )?;
+        // }
         if let Some(uid) = uid {
             tx.execute(
                 "UPDATE inode SET uid = ?2 WHERE inode = ?1",

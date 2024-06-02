@@ -34,8 +34,12 @@ impl fmt::Display for BlockTopology {
     }
 }
 impl From<BlockTopology> for String {
-    fn from(_value: BlockTopology) -> Self {
-        todo!()
+    fn from(value: BlockTopology) -> Self {
+        match value {
+            BlockTopology::Single => "Single".to_string(),
+            BlockTopology::Mirror(n) => format!("Mirror({})", n),
+            BlockTopology::Erasure(_, d, p) => format!("Erasure({},{})", d, p)
+        }
     }
 }
 
@@ -290,6 +294,11 @@ impl VirtualBlock {
 
     /// Sync-Flush- the buffers to disk.
     pub fn sync_data(&self) -> Result<(), ShmrError> {
+        debug!(
+                "[{}:{:#016x}] syncing buffer",
+                self.ino,
+                self.idx,
+            );
         self.open_shards()?;
 
         let shard_file_handles = self.shard_handles.lock().unwrap();
@@ -374,7 +383,7 @@ impl VirtualBlock {
     fn open_shards(&self) -> Result<(), ShmrError> {
         let mut shard_file_handles = self.shard_handles.lock().unwrap();
         if self.shards.len() == shard_file_handles.len() {
-            debug!(
+            trace!(
                 "[{}:{:#016x}] shards are already opened. skipping.",
                 self.ino, self.idx
             );

@@ -25,7 +25,7 @@ impl FileDB {
         vf.blocks = self.load_blocks(ino)?;
         vf.chunk_map = self.load_chunk_map(ino)?;
 
-        let mut stmt = conn.prepare("SELECT size, blksize FROM inode WHERE inode = ?1")?;
+        let mut stmt = conn.prepare("SELECT size FROM inode WHERE inode = ?1")?;
         stmt.query_row(params![ino], |row| {
             vf.size = row.get(0)?;
             Ok(())
@@ -41,31 +41,33 @@ impl FileDB {
         let conn = self.conn.get()?;
         let mut stmt =
             conn.prepare("SELECT idx, size, topology FROM storage_block WHERE inode = ?1")?;
+        let mut shard_stmt =
+            conn.prepare("SELECT pool, bucket, filename FROM storage_block_shard WHERE inode = ?1 AND idx = ?2 ORDER BY shard_idx ASC")?;
+
         let mut rtn = vec![];
 
-        let blocks = stmt.query_map(params![&ino], |row| {
+        let mut rows = stmt.query(params![&ino])?;
+        while let Some(row) = rows. next()? {
             let topology: String = row.get(2)?;
             let mut block = VirtualBlock::new();
             block.idx = row.get(0)?;
             block.size = row.get(1)?;
             block.topology = topology.try_into().unwrap();
 
-            Ok(block)
-        })?;
-
-        for block in blocks {
-            let mut block = block?;
-            let mut stmt = conn.prepare("SELECT pool, bucket, filename FROM storage_block_shard WHERE inode = ?1 AND idx = ?2")?;
-            stmt.query_row(params![&ino], |row| {
+            let mut shard_rows = shard_stmt.query(params![&ino, &block.idx])?;
+            while let Some(shard_row) = shard_rows.next()? {
+                let pool: String = shard_row.get(0)?;
+                let bucket: String = shard_row.get(1)?;
+                let filename: String = shard_row.get(2)?;
                 block.shards.push(VirtualPath {
-                    pool: row.get(0)?,
-                    bucket: row.get(1)?,
-                    filename: row.get(2)?,
+                    pool,
+                    bucket,
+                    filename,
                 });
-                Ok(())
-            })?;
+            }
 
             rtn.push(block);
+
         }
 
         Ok(rtn)
@@ -118,7 +120,7 @@ impl FileDB {
         // update the chunk map
         for (idx, chunk) in vf.chunk_map.iter().enumerate() {
             tx.execute(
-                "INSERT OR REPLACE INTO chunk (inode, chunk_idx, pointer) VALUES (?1, ?2, ?3)",
+                "INSERT OR REPLACE INTO inode_chunk_map (inode, chunk_idx, pointer) VALUES (?1, ?2, ?3)",
                 params![vf.ino, idx, create_chunk_pointer(chunk.0, chunk.1)],
             )?;
         }
