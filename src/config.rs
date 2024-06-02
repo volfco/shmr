@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Error;
 use std::path::PathBuf;
+use bytesize::ByteSize;
 use sysinfo::Disks;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,6 +20,8 @@ pub struct ShmrFsConfig {
 
     /// Write Pool
     pub write_pool: String,
+
+    pub sqlite_options: HashMap<String, String>
 }
 impl ShmrFsConfig {
     /// Select n Buckets from the given pool
@@ -61,6 +64,11 @@ impl ShmrFsConfig {
 
         Ok(selected_buckets)
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheConfig {
+    max_memory: ByteSize
 }
 
 #[derive(Serialize, Deserialize, Ord, PartialOrd, Eq, PartialEq, Debug, Clone, Default)]

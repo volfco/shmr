@@ -1,3 +1,6 @@
+pub mod cache;
+pub mod flush;
+
 use rand::Rng;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -5,14 +8,14 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use std::{mem, thread};
 
-trait WorkerTask: Clone + Sync + Send {
+pub trait WorkerTask: Clone + Sync + Send {
     fn pre(&self) {}
     fn post(&self) {}
     fn execute(&self);
 }
 
-struct WorkerThread<T: WorkerTask + Sized> {
-    name: String,
+#[derive(Clone, Debug)]
+pub struct WorkerThread<T: WorkerTask + Sized> {
     run: Arc<AtomicBool>,
     join_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
     interval: Duration,
@@ -21,15 +24,11 @@ struct WorkerThread<T: WorkerTask + Sized> {
 impl<T: WorkerTask + Sized + 'static> WorkerThread<T> {
     pub fn new(task: T) -> Self {
         Self {
-            name: "".to_string(),
             run: Arc::new(AtomicBool::new(false)),
             join_handle: Arc::new(Mutex::new(None)),
             interval: Duration::from_secs(1),
             task,
         }
-    }
-    pub fn name(self, name: String) -> Self {
-        Self { name, ..self }
     }
     pub fn interval(self, interval: Duration) -> Self {
         Self { interval, ..self }

@@ -1,4 +1,9 @@
 
+# Goals
+
+# Non-goals
+## Efficient Handling of Small Files
+Because shmr is a file based redundancy system
 
 ## Subsystems
 

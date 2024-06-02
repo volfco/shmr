@@ -1,5 +1,12 @@
 mount_dir: ./mnt
 metadata_dir: ./metadata
+
+write_pool: pool0
+
+# Disk Pools
+# Each pool can be considered a tier in the filesystem.
+# It is recommended that the write_pool be a standard RAID backed Filesystem, as shmr makes no attempt to ensure
+# redundancy in this pool by default.
 pools:
   pool0:
     p0:
@@ -28,15 +35,8 @@ pools:
     sdh:
       path: /mnt/sdh
 
-write_pool: pool0
-
-memory:
-  cache_size: 1GiB
-
-page_cache:
-  enabled: true
-  # Fully Load
-  full_load_under: 8MB
+cache:
+  max_memory: 1GiB
 
 sqlite_options:
   # maximum size of database page cache

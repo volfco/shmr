@@ -1,11 +1,11 @@
 use crate::config::ShmrError;
 use crate::fuse::types::IFileType;
 use fuser::{FileAttr, Request, TimeOrNow};
+use log::debug;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{named_params, params};
 use std::time::{SystemTime, UNIX_EPOCH};
-use log::debug;
 
 #[derive(Clone, Debug)]
 pub struct InodeDB {
@@ -170,21 +170,48 @@ impl InodeDB {
         Ok(row_exists)
     }
 
-    pub fn update_inode(&self, ino: u64, mode: Option<u32>, uid: Option<u32>, gid: Option<u32>, _size: Option<u64>, _atime: Option<TimeOrNow>, _mtime: Option<TimeOrNow>, _ctime: Option<SystemTime>, _crtime: Option<SystemTime>, _chgtime: Option<SystemTime>, _bkuptime: Option<SystemTime>, flags: Option<u32>) -> Result<(), ShmrError> {
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_inode(
+        &self,
+        ino: u64,
+        mode: Option<u32>,
+        uid: Option<u32>,
+        gid: Option<u32>,
+        _size: Option<u64>,
+        _atime: Option<TimeOrNow>,
+        _mtime: Option<TimeOrNow>,
+        _ctime: Option<SystemTime>,
+        _crtime: Option<SystemTime>,
+        _chgtime: Option<SystemTime>,
+        _bkuptime: Option<SystemTime>,
+        flags: Option<u32>,
+    ) -> Result<(), ShmrError> {
         let mut conn = self.conn.get()?;
         let tx = conn.transaction()?;
 
         if let Some(mode) = mode {
-            tx.execute("UPDATE inode SET mode = ?2 WHERE inode = ?1", params![ino, mode])?;
+            tx.execute(
+                "UPDATE inode SET mode = ?2 WHERE inode = ?1",
+                params![ino, mode],
+            )?;
         }
         if let Some(uid) = uid {
-            tx.execute("UPDATE inode SET uid = ?2 WHERE inode = ?1", params![ino, uid])?;
+            tx.execute(
+                "UPDATE inode SET uid = ?2 WHERE inode = ?1",
+                params![ino, uid],
+            )?;
         }
         if let Some(gid) = gid {
-            tx.execute("UPDATE inode SET gid = ?2 WHERE inode = ?1", params![ino, gid])?;
+            tx.execute(
+                "UPDATE inode SET gid = ?2 WHERE inode = ?1",
+                params![ino, gid],
+            )?;
         }
         if let Some(flags) = flags {
-            tx.execute("UPDATE inode SET flags = ?2 WHERE inode = ?1", params![ino, flags])?;
+            tx.execute(
+                "UPDATE inode SET flags = ?2 WHERE inode = ?1",
+                params![ino, flags],
+            )?;
         }
         // if let Some(size) = size {
         //     tx.execute("UPDATE inode SET size = ?2 WHERE inode = ?1", params![ino, size])?;

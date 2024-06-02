@@ -2,27 +2,26 @@ extern crate core;
 
 use crate::config::{ShmrError, ShmrFsConfig};
 use crate::db::inode::InodeDB;
-use crate::db::FileDB;
-use crate::fuse::cache::FileCacheStrategy;
+use crate::db::file::FileDB;
+use crate::tasks::flush::{FlushMaster, FLUSH_MASTER_DEFAULT_RUN_INTERVAL};
+use crate::tasks::WorkerThread;
 use crate::vfs::VirtualFile;
 use dashmap::DashMap;
-use log::{info, warn};
-use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
+use log::warn;
 use rand::Rng;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use crate::db::get_connection;
 
 pub mod config;
 mod db;
 mod dbus;
 mod fuse;
 mod iostat;
+pub mod tasks;
 mod vfs;
-mod worker;
 
 #[derive(Clone, Debug)]
 pub struct ShmrFs {
-    db: Pool<SqliteConnectionManager>,
     config: ShmrFsConfig,
 
     inode_db: InodeDB,
@@ -37,21 +36,31 @@ pub struct ShmrFs {
     /// Stores VirtualBlocks, that may or may not be buffered, for quick access.
     file_cache: Arc<DashMap<u64, VirtualFile>>,
 
-    file_cache_strategy: Arc<Mutex<FileCacheStrategy>>,
+    // file_cache_strategy: Arc<Mutex<FileCacheStrategy>>,
+
+    tasks: ShmrFsTasks,
 }
 impl ShmrFs {
     pub fn new(config: ShmrFsConfig) -> Result<Self, ShmrError> {
-        let db_path = config.metadata_dir.join("../metadata/shmr.sqlite");
-        let db = Pool::new(SqliteConnectionManager::file(db_path)).unwrap();
+        let db = get_connection(&config);
+        let file_cache = Arc::new(DashMap::new());
+        let inode_db = InodeDB::open(db.clone());
+        let file_db = FileDB::open(db.clone());
+
+        let tasks = ShmrFsTasks {
+            flusher: WorkerThread::new(FlushMaster::new(file_db.clone(), file_cache.clone()))
+                .interval(FLUSH_MASTER_DEFAULT_RUN_INTERVAL),
+        };
+        tasks.start();
 
         Ok(Self {
-            inode_db: InodeDB::open(db.clone()),
-            file_db: FileDB::open(db.clone()),
-            file_handles: Arc::new(Default::default()),
-            file_cache: Arc::new(Default::default()),
-            db,
+            inode_db,
+            file_db,
+            tasks,
+            file_cache,
             config,
-            file_cache_strategy: Arc::new(Mutex::new(FileCacheStrategy::ReadCachePriority)),
+            // file_cache_strategy: Arc::new(Mutex::new(FileCacheStrategy::Read)),
+            file_handles: Arc::new(Default::default()),
         })
     }
 
@@ -69,34 +78,24 @@ impl ShmrFs {
 
     /// Release the File Handle, and maybe fully flush and close the Inode
     fn release_fh(&self, fh: u64) -> Result<(), ShmrError> {
-        let handle = self.file_handles.remove(&fh);
-
-        if handle.is_none() {
-            warn!("attempted to release a non-existent filehandle ({}).", fh);
-            return Ok(());
+        match self.file_handles.remove(&fh) {
+            None => warn!("attempted to release a non-existent filehandle ({}).", fh),
+            Some(inner) => {
+                let vf = self.file_cache.get(&inner.1).unwrap();
+                vf.sync_data()?;
+            }
         }
-
-        let (_, inode) = handle.unwrap();
-
-        let mut vf = self.file_cache.get_mut(&inode).unwrap();
-        vf.sync_data()?;
-
-        // scan for any other filehandles that point to the inode
-        let existing = self.file_handles.iter().find(|r| r.value() == &inode);
-        if existing.is_none() {
-            info!(
-                "Inode {} has no additional open FileHandles. Doing Something...",
-                inode
-            );
-
-            // sync all stuff
-            vf.sync_data()?;
-
-            // disable the buffer which will leave the file loaded, but drop all the buffers
-            vf.disable_buffer()?;
-        }
-
         Ok(())
+    }
+}
+
+#[derive(Clone, Debug)]
+struct ShmrFsTasks {
+    flusher: WorkerThread<FlushMaster>,
+}
+impl ShmrFsTasks {
+    fn start(&self) {
+        self.flusher.spawn();
     }
 }
 

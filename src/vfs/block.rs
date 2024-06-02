@@ -1,10 +1,10 @@
 use crate::config::{ShmrError, ShmrFsConfig};
 use crate::vfs::calculate_shard_size;
 use crate::vfs::path::{VirtualPath, VP_DEFAULT_FILE_EXT};
-use crate::worker::split_duration;
 use log::{debug, trace, warn};
 use reed_solomon_erasure::galois_8::ReedSolomon;
 use serde::{Deserialize, Serialize};
+use std::cmp;
 use std::default::Default;
 use std::fmt;
 use std::fs::{File, OpenOptions};
@@ -12,11 +12,7 @@ use std::io::Read;
 use std::os::unix::prelude::FileExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
-use std::{cmp, thread};
-
-pub const VIRTUAL_BLOCK_FLUSH_INTERVAL: u64 = 500; // ms
+use std::time::Instant;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum BlockTopology {
@@ -120,9 +116,6 @@ pub struct VirtualBlock {
 
     // stateful fields.
     #[serde(skip)]
-    buffered: bool,
-
-    #[serde(skip)]
     buffer_loaded: Arc<AtomicBool>,
 
     #[serde(skip)]
@@ -132,12 +125,6 @@ pub struct VirtualBlock {
     // bit of a hack to give the poolmap a default value, but it works.
     #[serde(skip)]
     pool_map: Option<ShmrFsConfig>,
-
-    #[serde(skip)]
-    run: Arc<Mutex<bool>>,
-
-    #[serde(skip)]
-    run_handle: Arc<Mutex<Option<JoinHandle<()>>>>, // TODO Add an IOTracker for the block as well?
 }
 impl Default for VirtualBlock {
     fn default() -> Self {
@@ -148,12 +135,9 @@ impl Default for VirtualBlock {
             topology: BlockTopology::Single,
             shards: Vec::new(),
             shard_handles: Arc::new(Mutex::new(Vec::new())),
-            buffered: false,
             buffer_loaded: Arc::new(AtomicBool::new(false)),
             buffer: Arc::new(Mutex::new(Vec::new())),
             pool_map: None,
-            run: Arc::new(Mutex::new(true)),
-            run_handle: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -163,40 +147,6 @@ impl VirtualBlock {
     }
     pub fn populate(&mut self, map: ShmrFsConfig) {
         self.pool_map = Some(map);
-    }
-
-    pub fn buffered(self) -> Self {
-        VirtualBlock {
-            buffered: true,
-            ..self
-        }
-    }
-
-    pub fn start(&self) -> Result<(), ShmrError> {
-        // set the handle to run
-        let mut run = self.run.lock().unwrap();
-        *run = true;
-
-        let mut run_handle = self.run_handle.lock().unwrap();
-        let local = self.clone();
-        *run_handle = Some(thread::spawn(move || {
-            flushomatic(local);
-        }));
-
-        Ok(())
-    }
-
-    pub fn stop(&self) -> Result<(), ShmrError> {
-        let mut run = self.run.lock().unwrap();
-        *run = false;
-
-        let mut run_handle = self.run_handle.lock().unwrap();
-        if let Some(handle) = run_handle.take() {
-            handle.join().unwrap();
-            *run_handle = None;
-        }
-
-        Ok(())
     }
 
     pub fn size(&self) -> u64 {
@@ -210,7 +160,7 @@ impl VirtualBlock {
         size: u64,
         topology: BlockTopology,
     ) -> Result<Self, ShmrError> {
-        debug!("[{:#016x}] creating new VirtualBlock", idx);
+        debug!("[{}:{:#016x}] creating new VirtualBlock", ino, idx);
 
         let (needed_shards, ident) = match &topology {
             BlockTopology::Single => (1, "single".to_string()),
@@ -240,69 +190,83 @@ impl VirtualBlock {
             topology,
             shards,
             shard_handles: Arc::new(Default::default()),
-            buffered: false,
             buffer_loaded: Arc::new(AtomicBool::new(false)),
             buffer: Arc::new(Mutex::new(vec![])),
             pool_map: Some(config.clone()),
-            run: Arc::new(Mutex::new(false)),
-            run_handle: Arc::new(Mutex::new(None)),
         })
     }
 
     /// Read from the VirtualBlock, at the given position, until the buffer is full
     pub fn read(&self, pos: usize, buf: &mut [u8]) -> Result<usize, ShmrError> {
-        debug!(
-            "[{:#016x}] reading {} bytes at {}",
+        trace!(
+            "[{}:{:#016x}] reading {} bytes at {}",
+            self.ino,
             self.idx,
             buf.len(),
             pos
         );
         if buf.is_empty() {
-            debug!("[{:#016x}] read was given an empty buffer", self.idx);
+            debug!(
+                "[{}:{:#016x}] read was given an empty buffer, returning early",
+                self.ino, self.idx
+            );
             return Ok(0);
         }
 
         if !self.buffer_loaded.load(Ordering::Relaxed) {
             trace!(
-                "[{:#016x}] buffer is not populated. loading from disk.",
+                "[{}:{:#016x}] buffer is not populated. loading from disk.",
+                self.ino,
                 self.idx
             );
             // populate the buffer with the contents of the shard(s)
             self.load_block()?;
-            // flag the buffer as loaded
         }
 
         let data = self.buffer.lock().unwrap();
-
         if data.len() < pos {
             return Err(ShmrError::OutOfSpace);
         }
+
         let read_bytes = cmp::min(data.len() - pos, buf.len());
-        buf[..read_bytes].copy_from_slice(&data[pos..pos + read_bytes]);
+        let pos_end = pos + read_bytes;
+        trace!(
+            "[{}:{:#016x}] buf[..{}] = &data[{}.{}]",
+            self.ino,
+            self.idx,
+            read_bytes,
+            pos,
+            pos_end
+        );
+        buf[..read_bytes].copy_from_slice(&data[pos..pos_end]);
+
         Ok(read_bytes)
     }
 
     pub fn write(&self, pos: u64, buf: &[u8]) -> Result<usize, ShmrError> {
         trace!(
-            "[{:#016x}] writing {} bytes at {}",
+            "[{}:{:#016x}] writing {} bytes at {}",
+            self.ino,
             self.idx,
             buf.len(),
             pos
         );
-        let written = buf.len();
 
         // make sure we're not writing past the end of the block
         if pos + buf.len() as u64 > self.size {
             return Err(ShmrError::OutOfSpace);
         }
 
+        let written = buf.len();
+
         // update the buffer
         {
             let mut buffer = self.buffer.lock().unwrap();
 
             // there are instances when the buffer has not been initialized, and we need to resize it.
-            // only resize it to the size of the incoming buffer, not the size of the block. One of
-            // the reasons is that if we zero-fill the entire buffer, we will write it all to disk, which will take up extra space.
+            // only resize the buffer to the size of the incoming buffer, not the size of the block.
+            // the reasons is that if we zero-fill the entire buffer, we will write it all to disk-
+            // which can take up extra space.
             // TODO this might have a big enough performance impact to warrant a better solution.
             let ending_pos = pos as usize + buf.len();
             if buffer.len() < ending_pos {
@@ -312,33 +276,31 @@ impl VirtualBlock {
             buffer[(pos as usize)..ending_pos].copy_from_slice(buf);
         }
 
-        if !self.buffered {
-            self.sync_data()?;
-        }
+        // if !self.buffered.load(Ordering::Relaxed) {
+        //     trace!(
+        //         "[{}:{:#016x}] block is not buffered. syncing data",
+        //         self.ino,
+        //         self.idx,
+        //     );
+        //     self.sync_data()?;
+        // }
 
         Ok(written)
     }
 
     /// Sync-Flush- the buffers to disk.
     pub fn sync_data(&self) -> Result<(), ShmrError> {
-        {
-            let shard_file_handles = self.shard_handles.lock().unwrap();
-            if self.shards.len() != shard_file_handles.len() {
-                drop(shard_file_handles); // dumb
-
-                warn!(
-                    "[{:#016x}] shard file handles are not opened at sync time",
-                    self.idx
-                );
-                self.open_shards()?;
-            }
-        }
+        self.open_shards()?;
 
         let shard_file_handles = self.shard_handles.lock().unwrap();
-
         let buffer = self.buffer.lock().unwrap();
 
         if buffer.is_empty() {
+            trace!(
+                "[{}:{:#016x}] sync_data called on block with an empty buffer",
+                self.ino,
+                self.idx,
+            );
             return Ok(());
         }
 
@@ -347,7 +309,6 @@ impl VirtualBlock {
                 let shard = &shard_file_handles[0];
 
                 shard.write_all_at(buffer.as_slice(), 0)?;
-
                 shard.sync_all()?;
             }
             BlockTopology::Mirror(n) => {
@@ -375,7 +336,6 @@ impl VirtualBlock {
                         r
                     })
                     .collect::<Vec<_>>();
-                trace!("shards: {:#?}", data_shards.len());
 
                 for _ in 0..(parity + (data - data_shards.len() as u8)) {
                     data_shards.push(vec![0; shard_size]);
@@ -386,8 +346,12 @@ impl VirtualBlock {
                 r.encode(&mut data_shards).unwrap();
 
                 let duration = start.elapsed();
-                debug!("Encoding duration: {:?}", duration);
+                debug!(
+                    "[{}:{:#016x}] took {:?} to perform erasure encoding",
+                    self.ino, self.idx, duration
+                );
 
+                // TODO do these writes in parallel
                 for (i, shard) in data_shards.iter().enumerate() {
                     let _ = &shard_file_handles[i].write_all_at(shard.as_slice(), 0)?;
                 }
@@ -397,7 +361,11 @@ impl VirtualBlock {
             }
         }
 
-        // debug!("[{:#016x}] successfully flushed buffer to disk", self.idx);
+        trace!(
+            "[{}:{:#016x}] successfully flushed buffer to disk",
+            self.ino,
+            self.idx
+        );
 
         Ok(())
     }
@@ -406,7 +374,10 @@ impl VirtualBlock {
     fn open_shards(&self) -> Result<(), ShmrError> {
         let mut shard_file_handles = self.shard_handles.lock().unwrap();
         if self.shards.len() == shard_file_handles.len() {
-            debug!("[{:#016x}] shards are already opened. skipping.", self.idx);
+            debug!(
+                "[{}:{:#016x}] shards are already opened. skipping.",
+                self.ino, self.idx
+            );
             return Ok(());
         }
 
@@ -421,7 +392,12 @@ impl VirtualBlock {
                 .read(true)
                 .write(true)
                 .open(&shard_path.0)?;
-            trace!("[{:#016x}] opening {:?}", self.idx, shard_path.0);
+            trace!(
+                "[{}:{:#016x}] opening {:?}",
+                self.ino,
+                self.idx,
+                shard_path.0
+            );
             shard_file_handles.push(shard_file);
         }
 
@@ -434,8 +410,8 @@ impl VirtualBlock {
         let mut shard_file_handles = self.shard_handles.lock().unwrap();
         let mut buffer = self.buffer.lock().unwrap();
 
-        // because Vec has a length of zero by default, and reading a file requires a buffer of a
-        // certain size
+        // because Vec has a length of zero by default, we need to size it before it's usable as a
+        // buffer
         let size = self.size as usize;
         if buffer.len() < size {
             buffer.resize(size, 0);
@@ -444,7 +420,12 @@ impl VirtualBlock {
         match self.topology {
             BlockTopology::Single => {
                 let read_amt = &shard_file_handles[0].read(&mut buffer)?;
-                debug!("[{:#016x}] read {} bytes from 1 shard", self.idx, read_amt);
+                trace!(
+                    "[{}:{:#016x}] read {} bytes from 1 shard",
+                    self.ino,
+                    self.idx,
+                    read_amt
+                );
             }
             BlockTopology::Mirror(_) => {
                 todo!("Implement Mirrored Read")
@@ -520,27 +501,6 @@ impl VirtualBlock {
 
         handles.clear();
         Ok(())
-    }
-}
-
-fn flushomatic(block: VirtualBlock) {
-    eprintln!("bing bong");
-    let (a, b) = split_duration(Duration::from_millis(VIRTUAL_BLOCK_FLUSH_INTERVAL));
-    debug!(
-        "[{:#016x}] starting worker. timings: {:?}/{:?}",
-        block.idx, &a, &b
-    );
-    loop {
-        thread::sleep(a);
-        {
-            let run = block.run.lock().unwrap();
-            if *run {
-                if let Err(e) = block.sync_data() {
-                    warn!("[{:#016x}] error syncing data: {:?}", block.idx, e);
-                }
-            }
-        }
-        thread::sleep(b);
     }
 }
 

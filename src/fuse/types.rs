@@ -18,7 +18,7 @@ pub enum IFileType {
     Socket,
 }
 impl IFileType {
-    pub fn from_mode(mode: u32) -> IFileType {
+    pub fn from_mode(mode: u16) -> IFileType {
         let mut mode = mode;
         mode &= libc::S_IFMT;
 

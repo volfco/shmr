@@ -5,7 +5,10 @@ pub mod types;
 use crate::fuse::magics::*;
 use crate::fuse::types::IFileType;
 use crate::ShmrFs;
-use fuser::{FileType, Filesystem, KernelConfig, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen, ReplyWrite, Request, FUSE_ROOT_ID, TimeOrNow};
+use fuser::{
+    FileType, Filesystem, KernelConfig, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty,
+    ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow, FUSE_ROOT_ID,
+};
 use libc::c_int;
 use log::{debug, error, info, trace, warn};
 use std::ffi::OsStr;
@@ -63,7 +66,19 @@ impl Filesystem for ShmrFs {
             .inode_db
             .get_directory_entry_inode(parent, name.to_str().unwrap())
         {
-            Ok(ino) => ino,
+            Ok(ino) => match ino {
+                Some(ino) => ino,
+                None => {
+                    warn!(
+                        "FUSE({}) Inode {} has no entry for {}",
+                        req.unique(),
+                        parent,
+                        name.to_str().unwrap()
+                    );
+                    reply.error(libc::ENOENT);
+                    return;
+                }
+            },
             Err(err) => {
                 error!(
                     "FUSE({}) Unable to get directory entry. {:?}",
@@ -74,18 +89,8 @@ impl Filesystem for ShmrFs {
                 return;
             }
         };
-        if child_inode.is_none() {
-            warn!(
-                "FUSE({}) Inode {} has no entry for {}",
-                req.unique(),
-                parent,
-                name.to_str().unwrap()
-            );
-            reply.error(libc::ENOENT);
-            return;
-        }
 
-        match self.inode_db.to_fileattr(child_inode.unwrap()) {
+        match self.inode_db.to_fileattr(child_inode) {
             Ok(attrs) => reply.entry(&Duration::new(0, 0), &attrs, 0),
             Err(_) => {
                 reply.error(libc::ENOENT);
@@ -96,8 +101,7 @@ impl Filesystem for ShmrFs {
     fn getattr(&mut self, req: &Request<'_>, ino: u64, reply: ReplyAttr) {
         trace!("FUSE({}) 'getattr' invoked for inode {}", req.unique(), ino);
 
-        let inode_exists = self.inode_db.check_inode(ino).unwrap();
-        if !inode_exists {
+        if !self.inode_db.check_inode(ino).unwrap() {
             warn!(
                 "FUSE({}) Inode {} does not exist or check_inode is false",
                 req.unique(),
@@ -109,23 +113,42 @@ impl Filesystem for ShmrFs {
 
         match self.inode_db.to_fileattr(ino) {
             Ok(inode_attr) => reply.attr(&Duration::new(0, 0), &inode_attr),
-            Err(e) => {
-                error!("mark 2. {:?}", e);
-                reply.error(libc::ENOENT)
-            }
+            Err(_e) => reply.error(libc::ENOENT),
         }
     }
 
-    fn setattr(&mut self, req: &Request<'_>, ino: u64, mode: Option<u32>, uid: Option<u32>, gid: Option<u32>, size: Option<u64>, atime: Option<TimeOrNow>, mtime: Option<TimeOrNow>, ctime: Option<SystemTime>, _fh: Option<u64>, crtime: Option<SystemTime>, chgtime: Option<SystemTime>, bkuptime: Option<SystemTime>, flags: Option<u32>, reply: ReplyAttr) {
+    fn setattr(
+        &mut self,
+        req: &Request<'_>,
+        ino: u64,
+        mode: Option<u32>,
+        uid: Option<u32>,
+        gid: Option<u32>,
+        size: Option<u64>,
+        atime: Option<TimeOrNow>,
+        mtime: Option<TimeOrNow>,
+        ctime: Option<SystemTime>,
+        _fh: Option<u64>,
+        crtime: Option<SystemTime>,
+        chgtime: Option<SystemTime>,
+        bkuptime: Option<SystemTime>,
+        flags: Option<u32>,
+        reply: ReplyAttr,
+    ) {
         trace!("FUSE({}) 'setattr' invoked on inode {}", req.unique(), ino);
 
-        if let Err(e) = self.inode_db.update_inode(ino, mode, uid, gid, size, atime, mtime, ctime, crtime, chgtime, bkuptime, flags) {
+        if let Err(e) = self.inode_db.update_inode(
+            ino, mode, uid, gid, size, atime, mtime, ctime, crtime, chgtime, bkuptime, flags,
+        ) {
             error!("FUSE({}) Query Error. {:?}", req.unique(), e);
             reply.error(libc::ENOMSG);
             return;
         }
 
-        reply.attr(&Duration::from_secs(0), &self.inode_db.to_fileattr(ino).unwrap())
+        reply.attr(
+            &Duration::from_secs(0),
+            &self.inode_db.to_fileattr(ino).unwrap(),
+        )
     }
 
     fn mknod(
@@ -144,6 +167,7 @@ impl Filesystem for ShmrFs {
             parent,
             name
         );
+        let mode = mode as u16;
 
         // check if directory already contains an entry for the given name
         match self
@@ -163,30 +187,28 @@ impl Filesystem for ShmrFs {
             }
         }
         let file_type = mode & libc::S_IFMT;
-        if file_type != libc::S_IFREG
-            && file_type != libc::S_IFLNK
-            && file_type != libc::S_IFDIR
-        {
+        if file_type != libc::S_IFREG && file_type != libc::S_IFLNK && file_type != libc::S_IFDIR {
             // TODO
             warn!("mknod() implementation is incomplete. Only supports regular files, symlinks, and directories. Got {:o}", mode);
             reply.error(libc::ENOSYS);
             return;
         }
 
-        let ino = self.inode_db.create_inode(
+        let ino = match self.inode_db.create_inode(
             None,
             IFileType::from_mode(mode),
             req.uid(),
             req.gid(),
             4096,
             0,
-        );
-        if let Err(e) = ino {
-            error!("FUSE({}) Unable to create Inode. {:?}", req.unique(), e);
-            reply.error(libc::EIO);
-            return;
-        }
-        let ino = ino.unwrap();
+        ) {
+            Ok(ino) => ino,
+            Err(e) => {
+                error!("FUSE({}) Unable to create Inode. {:?}", req.unique(), e);
+                reply.error(libc::EIO);
+                return;
+            }
+        };
 
         // add entry to the parent directory
         if let Err(e) = self
@@ -247,11 +269,13 @@ impl Filesystem for ShmrFs {
     /// Process:
     ///   1. Check if we can access the old parent inode
     ///   2. Check if we can access the new parent inode
-    ///   3. TODO Check if we have permissions on the entry's target inode
+    ///   3. Check if we have permissions on the entry's target inode
     ///   4. Check if the entry exists in the old parent directory
     ///   5. Check if the new entry does not exist in the new parent directory
     ///   6. Remove the Directory Entry from the old parent
     ///   7. Add the Directory Entry, with the new name, to the new parent
+    ///
+    /// TODO Add error handling for operations
     fn rename(
         &mut self,
         req: &Request<'_>,
@@ -264,9 +288,7 @@ impl Filesystem for ShmrFs {
     ) {
         trace!("FUSE({}) 'rename' invoked for parent {} with name {:?} to new parent {} with new name {:?}", req.unique(), parent, name, newparent, newname);
 
-        // check if we can access the newparent
         let parent_access = self.inode_db.check_access(parent, req, 0).unwrap();
-
         let newparent_access = self.inode_db.check_access(newparent, req, 0).unwrap();
 
         // if we don't have access to either the parent, or newparent- fail the operation
@@ -336,33 +358,26 @@ impl Filesystem for ShmrFs {
             reply.opened(fh, 0);
             return;
         }
-        // TODO enable buffered I/O
-
-        // load the file via load_virtual_file
-        // enable buffer
-        // add to map
 
         let mut vf = match self.file_db.load_virtual_file(ino) {
             Err(e) => {
-                error!("error loading VirtualFile. {:?}", e);
+                error!("FUSE({}) error loading VirtualFile. {:?}", req.unique(), e);
                 reply.error(libc::ENOMSG);
                 return;
             }
             Ok(vf) => vf,
         };
 
-        if let Err(e) = vf.enable_buffer() {
-            warn!(
-                "FUSE({}) Unable to enable file buffer. {:?}",
-                req.unique(),
-                e
-            );
-        }
         vf.populate(self.config.clone());
 
         self.file_cache.insert(ino, vf);
 
-        debug!("FUSE({}) Successfully opened inode {} with fh {}",req.unique(), ino, fh);
+        debug!(
+            "FUSE({}) Successfully opened inode {} with fh {}",
+            req.unique(),
+            ino,
+            fh
+        );
 
         reply.opened(fh, 0);
     }
@@ -389,7 +404,6 @@ impl Filesystem for ShmrFs {
 
         assert!(offset >= 0);
         let offset = offset as u64;
-        // TODO Access Control stuff here
 
         let vf = match self.file_cache.get(&ino) {
             Some(inner) => inner,
@@ -402,15 +416,19 @@ impl Filesystem for ShmrFs {
 
         let mut buffer = vec![0; 4096];
 
-        // TODO this might not work because offset might be negative?
         match vf.read(offset, &mut buffer) {
             Ok(_) => reply.data(&buffer),
             Err(e) => {
-                error!("Failed to read data to file: {:?}", e);
+                error!(
+                    "FUSE({}) Failed to read data to file: {:?}",
+                    req.unique(),
+                    e
+                );
                 reply.error(libc::EIO)
             }
         }
     }
+
     fn write(
         &mut self,
         req: &Request<'_>,
@@ -434,10 +452,6 @@ impl Filesystem for ShmrFs {
 
         assert!(offset >= 0);
         let offset = offset as u64;
-        // if !check_file_handle_write(fh) {
-        //   reply.error(libc::EACCES);
-        //   return;
-        // }
 
         let mut vf = match self.file_cache.get_mut(&ino) {
             Some(inner) => inner,
@@ -449,20 +463,16 @@ impl Filesystem for ShmrFs {
         };
 
         match vf.write(offset, data) {
-            Ok(amt) => {
-                reply.written(amt as u32);
-            }
+            Ok(amt) => reply.written(amt as u32),
             Err(e) => {
-                error!("Failed to write data to file: {:?}", e);
+                error!(
+                    "FUSE({}) Failed to write data to file: {:?}",
+                    req.unique(),
+                    e
+                );
                 reply.error(libc::EIO)
             }
         }
-    }
-
-    fn flush(&mut self, req: &Request<'_>, ino: u64, _fh: u64, _lock_owner: u64, _reply: ReplyEmpty) {
-        debug!("FUSE({}) 'flush' invoked on inode {}", req.unique(), ino);
-
-        todo!()
     }
 
     fn release(
@@ -484,7 +494,11 @@ impl Filesystem for ShmrFs {
         );
 
         if let Err(e) = self.release_fh(fh) {
-            error!("Error releasing file handle: {:?}", e);
+            error!(
+                "FUSE({}) Error releasing file handle: {:?}",
+                req.unique(),
+                e
+            );
             reply.error(libc::ENOMSG);
         } else {
             debug!(
@@ -497,8 +511,8 @@ impl Filesystem for ShmrFs {
         }
     }
 
-    fn fsync(&mut self, req: &Request<'_>, ino: u64, _fh: u64, _datasync: bool, reply: ReplyEmpty) {
-        debug!("FUSE({}) 'fsync' invoked on inode {}", req.unique(), ino);
+    fn fsync(&mut self, req: &Request<'_>, ino: u64, _fh: u64, datasync: bool, reply: ReplyEmpty) {
+        trace!("FUSE({}) 'fsync' invoked on inode {}", req.unique(), ino);
 
         match self.file_cache.get(&ino) {
             None => {
@@ -509,9 +523,19 @@ impl Filesystem for ShmrFs {
                 if let Err(e) = entry.sync_data() {
                     error!("FUSE({}) Error syncing data: {:?}", req.unique(), e);
                     reply.error(libc::EIO);
-                } else {
-                    reply.ok();
+                    return;
                 }
+
+                if !datasync {
+                    // if datasync is false, then also sync the metadata
+                    if let Err(e) = self.file_db.save_virtual_file(&entry) {
+                        error!("FUSE({}) Error syncing metadata. {:?}", req.unique(), e);
+                        reply.error(libc::EIO);
+                        return;
+                    }
+                }
+
+                reply.ok();
             }
         }
     }
@@ -522,29 +546,27 @@ impl Filesystem for ShmrFs {
     /// also implement stateless directory I/O and not store anything in fh, though that makes it
     /// impossible to implement standard conforming directory stream operations in case the
     /// contents of the directory can change between opendir and releasedir.
-    fn opendir(&mut self, req: &Request<'_>, ino: u64, flags: i32, reply: ReplyOpen) {
+    fn opendir(&mut self, req: &Request<'_>, ino: u64, _flags: i32, reply: ReplyOpen) {
         debug!("FUSE({}) 'opendir' invoked on inode {}", req.unique(), ino);
-        let (access_mask, _read, _write) = match flags & libc::O_ACCMODE {
-            libc::O_RDONLY => {
-                // Behavior is undefined, but most filesystems return EACCES
-                if flags & libc::O_TRUNC != 0 {
-                    reply.error(libc::EACCES);
-                    return;
-                }
-                (libc::R_OK, true, false)
-            }
-            libc::O_WRONLY => (libc::W_OK, false, true),
-            libc::O_RDWR => (libc::R_OK | libc::W_OK, true, true),
-            // Exactly one access mode flag must be specified
-            _ => {
-                reply.error(libc::EINVAL);
-                return;
-            }
-        };
-
-        self.inode_db.check_access(ino, req, access_mask);
-
-        // TODO Track open file handles
+        // let (access_mask, _read, _write) = match flags & libc::O_ACCMODE {
+        //     libc::O_RDONLY => {
+        //         // Behavior is undefined, but most filesystems return EACCES
+        //         if flags & libc::O_TRUNC != 0 {
+        //             reply.error(libc::EACCES);
+        //             return;
+        //         }
+        //         (libc::R_OK, true, false)
+        //     }
+        //     libc::O_WRONLY => (libc::W_OK, false, true),
+        //     libc::O_RDWR => (libc::R_OK | libc::W_OK, true, true),
+        //     // Exactly one access mode flag must be specified
+        //     _ => {
+        //         reply.error(libc::EINVAL);
+        //         return;
+        //     }
+        // };
+        //
+        // self.inode_db.check_access(ino, req, access_mask);
 
         reply.opened(0, 0);
     }

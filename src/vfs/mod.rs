@@ -59,9 +59,6 @@ pub struct VirtualFile {
     config: Option<ShmrFsConfig>,
 
     #[serde(skip)]
-    buffered: bool,
-
-    #[serde(skip)]
     io_stat: IOTracker,
 }
 impl Default for VirtualFile {
@@ -79,23 +76,8 @@ impl VirtualFile {
             blocks: vec![],
             block_size: VIRTUAL_BLOCK_DEFAULT_SIZE,
             config: None,
-            buffered: false,
             io_stat: IOTracker::new(),
         }
-    }
-
-    pub fn enable_buffer(&mut self) -> Result<(), ShmrError> {
-        self.buffered = true;
-        // TODO start background thread and stuff
-        Ok(())
-    }
-
-    pub fn disable_buffer(&mut self) -> Result<(), ShmrError> {
-        for block in self.blocks.iter() {
-            block.drop_buffer()?;
-        }
-        self.buffered = false;
-        Ok(())
     }
 
     pub fn populate(&mut self, config: ShmrFsConfig) {
@@ -105,10 +87,18 @@ impl VirtualFile {
         self.config = Some(config);
     }
 
-    /// Flush all Storage Blocks
+    /// Sync the data on all blocks
     pub fn sync_data(&self) -> Result<(), ShmrError> {
         for block in self.blocks.iter() {
             block.sync_data()?;
+        }
+        Ok(())
+    }
+
+    /// Drop the Block Buffers. sync_data is called on each block before the buffer is dropped.
+    pub fn drop_buffers(&self) -> Result<(), ShmrError> {
+        for block in self.blocks.iter() {
+            block.drop_buffer()?;
         }
         Ok(())
     }
@@ -131,7 +121,7 @@ impl VirtualFile {
 
         // extend the chunk map
         let block_idx = self.blocks.len() as u64;
-        for i in 0..(block.size() as u64 / self.chunk_size) {
+        for i in 0..block.size() / self.chunk_size {
             self.chunk_map.push((block_idx, self.chunk_size * i));
             // TODO How to call file_db.register_chunk here?
         }

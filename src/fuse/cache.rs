@@ -1,11 +1,11 @@
 #[derive(Debug, Clone)]
 pub enum FileCacheStrategy {
     /// Prioritize keeping Read Heavy VirtualFiles in memory
-    ReadCachePriority,
+    Read,
     /// Prioritize keeping Write Heavy VirtualFiles in memory
-    WriteCachePriority,
+    Write,
     /// Prioritize keeping I/O Heavy VirtualFiles in memory, ignoring the type of I/O
-    IOCountPriority,
+    IOCount,
 }
 //
 //
