@@ -10,6 +10,7 @@ use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::Read;
 use std::os::unix::prelude::FileExt;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -116,7 +117,7 @@ pub struct VirtualBlock {
 
     /// File handles for each Shard. Stored in the same order as in shards
     #[serde(skip)]
-    shard_handles: Arc<Mutex<Vec<File>>>,
+    shard_handles: Arc<Mutex<Vec<(VirtualPath, File)>>>,
 
     // stateful fields.
     #[serde(skip)]
@@ -315,7 +316,7 @@ impl VirtualBlock {
 
         match self.topology {
             BlockTopology::Single => {
-                let shard = &shard_file_handles[0];
+                let shard = &shard_file_handles[0].1;
 
                 shard.write_all_at(buffer.as_slice(), 0)?;
                 shard.sync_all()?;
@@ -323,10 +324,10 @@ impl VirtualBlock {
             BlockTopology::Mirror(n) => {
                 // TODO do these in parallel
                 for i in 0..n {
-                    let _ = &shard_file_handles[i as usize].write_all_at(buffer.as_slice(), 0)?;
+                    let _ = &shard_file_handles[i as usize].1.write_all_at(buffer.as_slice(), 0)?;
                 }
                 for i in 0..n {
-                    let _ = &shard_file_handles[i as usize].sync_all()?;
+                    let _ = &shard_file_handles[i as usize].1.sync_all()?;
                 }
             }
             BlockTopology::Erasure(_, data, parity) => {
@@ -362,10 +363,10 @@ impl VirtualBlock {
 
                 // TODO do these writes in parallel
                 for (i, shard) in data_shards.iter().enumerate() {
-                    let _ = &shard_file_handles[i].write_all_at(shard.as_slice(), 0)?;
+                    let _ = &shard_file_handles[i].1.write_all_at(shard.as_slice(), 0)?;
                 }
                 for i in 0..data_shards.len() {
-                    let _ = &shard_file_handles[i].sync_all()?;
+                    let _ = &shard_file_handles[i].1.sync_all()?;
                 }
             }
         }
@@ -379,7 +380,7 @@ impl VirtualBlock {
         Ok(())
     }
 
-    /// We can assume that this will always be all or nothing
+    // TODO Something isn't right here. The 1st conditional doesn't catch sometimes?
     fn open_shards(&self) -> Result<(), ShmrError> {
         let mut shard_file_handles = self.shard_handles.lock().unwrap();
         if self.shards.len() == shard_file_handles.len() {
@@ -396,18 +397,32 @@ impl VirtualBlock {
         };
 
         for shard in &self.shards {
+
+            // scan shard_handles to make sure the VirtualPath is not already opened
+            if shard_file_handles.iter().any(|(path, _)| path == shard) {
+                warn!(
+                    "[{}:{:#016x}] shard already opened. {}. {}.",
+                    self.ino,
+                    self.idx,
+                    self.shards.len(),
+                    shard_file_handles.len()
+                );
+                continue;
+            }
+
             let shard_path = shard.resolve(pools)?;
             let shard_file = OpenOptions::new()
                 .read(true)
                 .write(true)
                 .open(&shard_path.0)?;
+
             trace!(
                 "[{}:{:#016x}] opening {:?}",
                 self.ino,
                 self.idx,
                 shard_path.0
             );
-            shard_file_handles.push(shard_file);
+            shard_file_handles.push((shard.clone(), shard_file));
         }
 
         Ok(())
@@ -428,7 +443,7 @@ impl VirtualBlock {
 
         match self.topology {
             BlockTopology::Single => {
-                let read_amt = &shard_file_handles[0].read(&mut buffer)?;
+                let read_amt = &shard_file_handles[0].1.read(&mut buffer)?;
                 trace!(
                     "[{}:{:#016x}] read {} bytes from 1 shard",
                     self.ino,
@@ -445,10 +460,10 @@ impl VirtualBlock {
                     let shard_size = calculate_shard_size(self.size, data);
                     let mut missing_shards = false;
                     let mut ec_shards: Vec<Option<Vec<u8>>> = shard_file_handles
-                        .iter()
+                        .iter_mut()
                         .map(|mut h| {
                             let mut buffer = vec![];
-                            let read_op = h.read_to_end(&mut buffer);
+                            let read_op = h.1.read_to_end(&mut buffer);
                             if read_op.is_err() {
                                 missing_shards = true;
                                 return None;

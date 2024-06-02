@@ -11,6 +11,7 @@ use log::warn;
 use rand::Rng;
 use std::sync::Arc;
 use crate::db::get_connection;
+use rlimit::Resource;
 
 pub mod config;
 mod db;
@@ -42,6 +43,10 @@ pub struct ShmrFs {
 }
 impl ShmrFs {
     pub fn new(config: ShmrFsConfig) -> Result<Self, ShmrError> {
+
+        // set limits
+        Resource::NOFILE.set(102400, 409600).expect("unable to set NOFILE limits");
+
         let db = get_connection(&config);
         let file_cache = Arc::new(DashMap::new());
         let inode_db = InodeDB::open(db.clone());
