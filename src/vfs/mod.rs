@@ -24,10 +24,6 @@ fn calculate_shard_size(length: u64, data_shards: u8) -> usize {
 ///
 /// - `chunk_size`: The size of each chunk of the file in bytes. This is also referred to as the "block size".
 ///
-/// - `chunk_map`: A vector that maps each chunk of the file to its underlying `StorageBlock`. The index of
-///                the vector represents the chunk number, and the value is a tuple of the storage block index
-///                and the offset within the block.
-///
 /// - `blocks`: A vector of `VirtualBlock` objects that make up the file. The blocks are stored in the order
 ///             in which they appear in the file.
 ///
@@ -41,11 +37,6 @@ pub struct VirtualFile {
 
     /// File Size, in bytes
     pub size: u64,
-
-    /// Chunk Map, mapping each chunk of the file to it's underlying StorageBlock. Vec index is the
-    /// chunk number
-    /// [chunk index] => (Storage Block, Offset)
-    pub chunk_map: Vec<(u64, u64)>,
 
     /// Chunk Size, in bytes. This is the "block size" for the file
     pub chunk_size: u64,
@@ -71,7 +62,6 @@ impl VirtualFile {
         VirtualFile {
             ino: 0,
             size: 0,
-            chunk_map: vec![],
             chunk_size: 4096,
             blocks: vec![],
             block_size: VIRTUAL_BLOCK_DEFAULT_SIZE,
@@ -119,13 +109,6 @@ impl VirtualFile {
             BlockTopology::Single,
         )?;
 
-        // extend the chunk map
-        let block_idx = self.blocks.len() as u64;
-        for i in 0..block.size() / self.chunk_size {
-            self.chunk_map.push((block_idx, self.chunk_size * i));
-            // TODO How to call file_db.register_chunk here?
-        }
-
         self.blocks.push(block);
         Ok(())
     }
@@ -150,11 +133,6 @@ impl VirtualFile {
             panic!("pool_map has not been populated. Unable to perform operation.")
         };
 
-        // if the chunk map is empty, there's nothing to read... and the logic below falls apart
-        if self.chunk_map.is_empty() {
-            return Ok(0);
-        }
-
         let mut read: usize = 0; // amount read
         let mut chk_pos = pos % self.chunk_size; // initial chunk offset
         let pos_chk = pos / self.chunk_size;
@@ -162,24 +140,18 @@ impl VirtualFile {
 
         let chunk_range = pos_chk..=pos_chk + buf_chk;
 
-        for idx in chunk_range {
-            let (block_idx, block_pos) = self
-                .chunk_map
-                .get(idx as usize)
-                .expect("there's nothing here");
+        for chunk_idx in chunk_range {
+            let block_idx = (chunk_idx * self.chunk_size) / self.block_size;
+            let block_pos = (chunk_idx * self.chunk_size) % self.block_size;
 
             // we might get a read that starts in the middle a chunk
             // in that case, just move the block cursor forward the amount of the chunk offset
             let read_pos = (block_pos + chk_pos) as usize;
             let read_amt = cmp::min(bf, read as u64 + self.chunk_size - chk_pos) as usize;
 
-            trace!("reading {} bytes from chunk {} (mapping to block_idx:{} / block_pos:{} / read_pos:{})", read_amt, idx, *block_idx, block_pos, read_pos);
+            trace!("reading {} bytes from chunk {} (mapping to block_idx:{} / block_pos:{} / read_pos:{})", read_amt, chunk_idx, block_idx, block_pos, read_pos);
 
-            read += &self.blocks[*block_idx as usize].read(read_pos, &mut buf[read..read_amt])?;
-            // just open up the buffer, write a copy of the block. Then... it should just work. NO. We need to start the background thread and populate the Pool Map
-            // because we're holding a reference to the object. So even if the virtualfile is dropped, the block will still be in memory.
-            // then when we want to evict, we can just unload the block from memory.
-            // just need to make sure that we delete unloaded/stale blocks from the cache; so we don't leak memory.
+            read += &self.blocks[block_idx as usize].read(read_pos, &mut buf[read..read_amt])?;
 
             chk_pos = 0;
         }
@@ -205,23 +177,22 @@ impl VirtualFile {
         };
 
         let mut written: usize = 0;
+        let chk_per_blk = self.block_size / self.chunk_size;
         for chunk_idx in (pos / self.chunk_size)..=((pos + bf) / self.chunk_size) {
             // allocate a new block if we're out of space to write the chunk
-            if self.chunk_map.is_empty() || self.chunk_map.len() as u64 <= chunk_idx {
+            if (self.blocks.len() as u64 * chk_per_blk) <= chunk_idx {
                 self.allocate_block()?;
             }
-            let (block_idx, block_pos) =
-                self.chunk_map.get(chunk_idx as usize).unwrap_or_else(|| {
-                    panic!(
-                        "chunk_idx: {}. chunk_map len: {}",
-                        chunk_idx,
-                        self.chunk_map.len()
-                    )
-                });
+
+            let block_idx = (chunk_idx * self.chunk_size) / self.block_size;
+            let block_pos = (chunk_idx * self.chunk_size) % self.block_size;
 
             let buf_end = cmp::min(written as u64 + self.chunk_size, bf) as usize;
+
+            trace!("writing {} bytes from chunk {} (mapping to block_idx:{} / block_pos:{})", buf_end, chunk_idx, block_idx, block_pos);
+
             written +=
-                self.blocks[*block_idx as usize].write(*block_pos, &buf[written..buf_end])?;
+                self.blocks[block_idx as usize].write(block_pos, &buf[written..buf_end])?;
         }
 
         // size is the largest (offset + written buffer)
@@ -260,7 +231,6 @@ mod tests {
             ino: rand::random(),
             size: 0,
             chunk_size: 4096,
-            chunk_map: Vec::new(),
             blocks: Vec::new(),
             block_size: VIRTUAL_BLOCK_DEFAULT_SIZE,
             config: Some(ShmrFsConfig {
@@ -276,8 +246,6 @@ mod tests {
 
     #[test]
     fn test_virtual_file() {
-        env_logger::init();
-
         let mut vf = gen_virtual_file();
         let data = random_data(7000);
 
@@ -287,10 +255,23 @@ mod tests {
         assert_eq!(vf.size, 7000);
         assert_eq!(vf.blocks.len(), 1);
 
+        for i in 0..vf.blocks.len() {
+            let mut buf = vec![0u8; vf.chunk_size as usize];
+            let read = vf.blocks[i].read(0, &mut buf);
+            assert_eq!(read.unwrap(), vf.chunk_size as usize);
+
+            // Get corresponding data shard from original input data
+            let shard_start = i * vf.chunk_size as usize;
+            let shard_end = std::cmp::min(shard_start + vf.chunk_size as usize, data.len());
+
+            assert_eq!(buf, &data[shard_start..shard_end]);
+        }
+
         let mut buf = vec![0u8; 7000];
         let read = vf.read(0, &mut buf);
         assert_eq!(read.unwrap(), 7000);
 
         assert_eq!(buf, data);
     }
+
 }

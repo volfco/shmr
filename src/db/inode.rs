@@ -171,7 +171,7 @@ impl InodeDB {
     pub fn update_inode(
         &self,
         ino: u64,
-        mode: Option<u32>,
+        _mode: Option<u32>,
         uid: Option<u32>,
         gid: Option<u32>,
         _size: Option<u64>,

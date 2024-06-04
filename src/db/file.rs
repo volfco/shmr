@@ -23,7 +23,6 @@ impl FileDB {
         let mut vf = VirtualFile::new();
         vf.ino = ino;
         vf.blocks = self.load_blocks(ino)?;
-        vf.chunk_map = self.load_chunk_map(ino)?;
 
         let mut stmt = conn.prepare("SELECT size FROM inode WHERE inode = ?1")?;
         stmt.query_row(params![ino], |row| {
@@ -73,26 +72,6 @@ impl FileDB {
         Ok(rtn)
     }
 
-    fn load_chunk_map(&self, ino: u64) -> Result<Vec<(u64, u64)>, ShmrError> {
-        // chunk map is (inode, chunk_idx) -> Vec<u8>. First half is u64 of StorageBlock, 2nd is block offset
-        let conn = self.conn.get()?;
-        let mut stmt = conn.prepare(
-            "SELECT pointer FROM inode_chunk_map WHERE inode = ?1 ORDER BY chunk_idx ASC;",
-        )?;
-
-        let rows = stmt.query_map(params![ino], |row| {
-            let blob: Vec<u8> = row.get(0)?;
-            Ok(parse_chunk_pointer(blob))
-        })?;
-
-        let mut chunk_map = Vec::new();
-        for row in rows {
-            chunk_map.push(row?);
-        }
-
-        Ok(chunk_map)
-    }
-
     /// Save the VirtualFile's metadata to the database. All Inode, Chunk, and Storageblock info is
     /// updated. This method is not intended to create a VirtualFile, as that should be done as part
     /// of the Inode creation.
@@ -116,14 +95,6 @@ impl FileDB {
             "UPDATE inode SET size = ?2, ctime = ?3 WHERE inode = ?1",
             params![vf.ino, vf.size, now_unix()],
         )?;
-
-        // update the chunk map
-        for (idx, chunk) in vf.chunk_map.iter().enumerate() {
-            tx.execute(
-                "INSERT OR REPLACE INTO inode_chunk_map (inode, chunk_idx, pointer) VALUES (?1, ?2, ?3)",
-                params![vf.ino, idx, create_chunk_pointer(chunk.0, chunk.1)],
-            )?;
-        }
 
         // update the blocks
         for (idx, block) in vf.blocks.iter().enumerate() {
