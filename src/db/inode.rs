@@ -116,7 +116,7 @@ impl InodeDB {
 
         // TODO refactor this so the query is built in a more readable away
         let mut query = String::new();
-        query.push_str("INSERT INTO inode (");
+        query.push_str("INSERT OR REPLACE INTO inode (");
         if ino.is_some() {
             query.push_str("inode, ")
         }
@@ -259,7 +259,7 @@ impl InodeDB {
 
         // No validation is needed, as the database *should* validate due to foreign key constraints
         let mut stmt = conn.prepare(
-            "INSERT INTO directory (parent, entry, inode) VALUES (:parent, :entry, :target)",
+            "INSERT OR REPLACE INTO directory (parent, entry, inode) VALUES (:parent, :entry, :target)",
         )?;
         stmt.execute(named_params! {
             ":parent": ino,

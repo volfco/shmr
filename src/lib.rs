@@ -20,6 +20,7 @@ mod fuse;
 mod iostat;
 pub mod tasks;
 mod vfs;
+mod databunny;
 
 #[derive(Clone, Debug)]
 pub struct ShmrFs {
