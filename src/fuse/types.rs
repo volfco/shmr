@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use crate::fuse::Mode;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum IFileType {
@@ -18,7 +19,7 @@ pub enum IFileType {
     Socket,
 }
 impl IFileType {
-    pub fn from_mode(mode: u32) -> IFileType {
+    pub fn from_mode(mode: Mode) -> IFileType {
         let mut mode = mode;
         mode &= libc::S_IFMT;
 

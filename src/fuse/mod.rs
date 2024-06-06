@@ -16,6 +16,12 @@ use std::os::unix::prelude::OsStrExt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 // libc::ENOMSG
 
+#[cfg(target_os = "macos")]
+pub type Mode = u16;
+
+#[cfg(not(target_os = "macos"))]
+pub type Mode = u32;
+
 impl Filesystem for ShmrFs {
     fn init(&mut self, req: &Request<'_>, _config: &mut KernelConfig) -> Result<(), c_int> {
         match self.inode_db.check_inode(FUSE_ROOT_ID) {
@@ -185,7 +191,7 @@ impl Filesystem for ShmrFs {
                 return;
             }
         }
-        let file_type = mode & libc::S_IFMT;
+        let file_type = mode as Mode & libc::S_IFMT;
         if file_type != libc::S_IFREG && file_type != libc::S_IFLNK && file_type != libc::S_IFDIR {
             // TODO
             warn!("mknod() implementation is incomplete. Only supports regular files, symlinks, and directories. Got {:o}", mode);
@@ -195,7 +201,7 @@ impl Filesystem for ShmrFs {
 
         let ino = match self.inode_db.create_inode(
             None,
-            IFileType::from_mode(mode),
+            IFileType::from_mode(mode as Mode),
             req.uid(),
             req.gid(),
             4096,
