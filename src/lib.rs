@@ -1,73 +1,58 @@
 extern crate core;
 
 use crate::config::{ShmrError, ShmrFsConfig};
-use crate::db::inode::InodeDB;
+use crate::databunny::DataBunny;
 use crate::db::file::FileDB;
-use crate::tasks::flush::{FlushMaster, FLUSH_MASTER_DEFAULT_RUN_INTERVAL};
+use crate::tasks::flush::{FlushMaster};
 use crate::tasks::WorkerThread;
-use crate::vfs::VirtualFile;
+use crate::types::SuperblockEntry;
 use dashmap::DashMap;
-use log::warn;
 use rand::Rng;
-use std::sync::Arc;
-use crate::db::get_connection;
 use rlimit::Resource;
+use std::sync::Arc;
 
 pub mod config;
+mod databunny;
 mod db;
 mod dbus;
 mod fuse;
 mod iostat;
 pub mod tasks;
+mod types;
 mod vfs;
-mod databunny;
+
+pub const VFS_DEFAULT_BLOCK_SIZE: u64 = 4096;
 
 #[derive(Clone, Debug)]
 pub struct ShmrFs {
     config: ShmrFsConfig,
 
-    inode_db: InodeDB,
-    file_db: FileDB,
+    superblock: DataBunny<u64, SuperblockEntry>,
 
     /// File Handle Map.
     /// Maps the fh (key) to the inode (value).
     /// Used to map FUSE File Handles to their associated Inode. This is used for eviction selection
     file_handles: Arc<DashMap<u64, u64>>,
-
-    /// File Block Cache
-    /// Stores VirtualBlocks, that may or may not be buffered, for quick access.
-    file_cache: Arc<DashMap<u64, VirtualFile>>,
-
-    // file_cache_strategy: Arc<Mutex<FileCacheStrategy>>,
-
-    tasks: ShmrFsTasks,
 }
 impl ShmrFs {
     pub fn new(config: ShmrFsConfig) -> Result<Self, ShmrError> {
-
         // set limits
-        Resource::NOFILE.set(102400, 409600).expect("unable to set NOFILE limits");
+        Resource::NOFILE
+            .set(102400, 409600)
+            .expect("unable to set NOFILE limits");
 
-        let db = get_connection(&config);
-        let file_cache = Arc::new(DashMap::new());
-        let inode_db = InodeDB::open(db.clone());
-        let file_db = FileDB::open(db.clone());
-
-        let tasks = ShmrFsTasks {
-            flusher: WorkerThread::new(FlushMaster::new(file_db.clone(), file_cache.clone()))
-                .interval(FLUSH_MASTER_DEFAULT_RUN_INTERVAL),
-        };
-        tasks.start();
 
         Ok(Self {
-            inode_db,
-            file_db,
-            tasks,
-            file_cache,
+            superblock: DataBunny::open(&config.metadata_dir).unwrap(),
             config,
             // file_cache_strategy: Arc::new(Mutex::new(FileCacheStrategy::Read)),
             file_handles: Arc::new(Default::default()),
         })
+    }
+
+    /// Generate Inode Number
+    fn gen_ino(&self) -> u64 {
+        self.superblock.last_key() + 1
     }
 
     /// Generate a File Handle. Guaranteed to not overlap with existing entries.
@@ -84,14 +69,16 @@ impl ShmrFs {
 
     /// Release the File Handle, and maybe fully flush and close the Inode
     fn release_fh(&self, fh: u64) -> Result<(), ShmrError> {
-        match self.file_handles.remove(&fh) {
-            None => warn!("attempted to release a non-existent filehandle ({}).", fh),
-            Some(inner) => {
-                let vf = self.file_cache.get(&inner.1).unwrap();
-                vf.sync_data(false)?;
-            }
-        }
         Ok(())
+    }
+
+    fn check_access(&self, inode: u64, uid: u32, gid: u32, access_mask: i32) -> bool {
+        self.superblock.has(&inode)
+            && self
+            .superblock
+            .get(&inode)
+            .unwrap().unwrap().inode
+            .check_access(uid, gid, access_mask)
     }
 }
 

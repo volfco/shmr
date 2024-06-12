@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::fuse::Mode;
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum IFileType {

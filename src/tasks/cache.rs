@@ -2,11 +2,11 @@
 // pub const FILE_CACHE_MANAGER_SWEEP_INTERVAL: usize = 500; // ms
 // pub const FILE_CACHE_MANAGER_LOW_WATERMARK_RATIO: f32 = 0.69420; //
 
-use std::sync::Arc;
-use dashmap::DashMap;
 use crate::config::ShmrFsConfig;
 use crate::tasks::WorkerTask;
 use crate::vfs::VirtualFile;
+use dashmap::DashMap;
+use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct CacheWorker {
@@ -16,9 +16,6 @@ pub struct CacheWorker {
 
 impl WorkerTask for CacheWorker {
     fn execute(&self) {
-
-
-
         todo!()
     }
 }

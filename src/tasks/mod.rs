@@ -11,6 +11,7 @@ use std::{mem, thread};
 pub trait WorkerTask: Clone + Sync + Send {
     fn pre(&self) {}
     fn post(&self) {}
+    // TODO give execute a mutable reference
     fn execute(&self);
 }
 

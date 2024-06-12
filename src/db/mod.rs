@@ -1,19 +1,19 @@
-pub mod inode;
 pub mod file;
+pub mod inode;
 
-use rusqlite::trace;
-use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
-use std::time::{SystemTime, UNIX_EPOCH};
+use crate::config::ShmrFsConfig;
 use libc::c_int;
 use log::{error, info, warn};
-use crate::config::ShmrFsConfig;
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::trace;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn log_handler(err: c_int, message: &str) {
     match err {
         10 => warn!("rusqlite: {}", message),
         11 => error!("rusqlite: {}", message),
-        _ => info!("{}. rusqlite: {}", err, message)
+        _ => info!("{}. rusqlite: {}", err, message),
     }
 }
 

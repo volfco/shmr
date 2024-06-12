@@ -4,7 +4,6 @@ use crate::vfs::path::{VirtualPath, VP_DEFAULT_FILE_EXT};
 use log::{debug, trace, warn};
 use reed_solomon_erasure::galois_8::ReedSolomon;
 use serde::{Deserialize, Serialize};
-use std::{cmp, mem};
 use std::default::Default;
 use std::fmt;
 use std::fs::{File, OpenOptions};
@@ -13,6 +12,7 @@ use std::os::unix::prelude::FileExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use std::{cmp, mem};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum BlockTopology {
@@ -38,7 +38,7 @@ impl From<BlockTopology> for String {
         match value {
             BlockTopology::Single => "Single".to_string(),
             BlockTopology::Mirror(n) => format!("Mirror({})", n),
-            BlockTopology::Erasure(_, d, p) => format!("Erasure({},{})", d, p)
+            BlockTopology::Erasure(_, d, p) => format!("Erasure({},{})", d, p),
         }
     }
 }
@@ -310,11 +310,11 @@ impl VirtualBlock {
             return Ok(());
         }
 
-        // debug!(
-        //         "[{}:{:#016x}] syncing buffer",
-        //         self.ino,
-        //         self.idx,
-        //     );
+        trace!(
+                "[{}:{:#016x}] syncing buffer",
+                self.ino,
+                self.idx,
+            );
         if !self.shard_loaded.load(Ordering::Relaxed) {
             self.open_handles()?;
         }
@@ -336,7 +336,9 @@ impl VirtualBlock {
             BlockTopology::Mirror(n) => {
                 // TODO do these in parallel
                 for i in 0..n {
-                    let _ = &shard_file_handles[i as usize].1.write_all_at(buffer.as_slice(), 0)?;
+                    let _ = &shard_file_handles[i as usize]
+                        .1
+                        .write_all_at(buffer.as_slice(), 0)?;
                 }
                 for i in 0..n {
                     let _ = &shard_file_handles[i as usize].1.sync_all()?;
@@ -403,7 +405,10 @@ impl VirtualBlock {
 
         let mut shard_file_handles = self.shard_handles.lock().unwrap();
         if shard_file_handles.len() > 0 {
-            debug!("[{}:{:#016x}] dropping existing handles", self.ino, self.idx);
+            debug!(
+                "[{}:{:#016x}] dropping existing handles",
+                self.ino, self.idx
+            );
             // take the contents of the Vec and just throw them on the ground
             // https://www.youtube.com/watch?v=gAYL5H46QnQ
             let _ = mem::take(&mut *shard_file_handles);

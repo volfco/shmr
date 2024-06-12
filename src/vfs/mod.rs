@@ -4,7 +4,7 @@ use crate::config::ShmrFsConfig;
 use crate::iostat::IOTracker;
 use crate::vfs::block::{BlockTopology, VirtualBlock};
 use crate::vfs::path::VIRTUAL_BLOCK_DEFAULT_SIZE;
-use crate::ShmrError;
+use crate::{ShmrError, VFS_DEFAULT_BLOCK_SIZE};
 use log::{debug, trace};
 use serde::{Deserialize, Serialize};
 use std::cmp;
@@ -62,7 +62,7 @@ impl VirtualFile {
         VirtualFile {
             ino: 0,
             size: 0,
-            chunk_size: 4096,
+            chunk_size: VFS_DEFAULT_BLOCK_SIZE,
             blocks: vec![],
             block_size: VIRTUAL_BLOCK_DEFAULT_SIZE,
             config: None,
@@ -189,10 +189,15 @@ impl VirtualFile {
 
             let buf_end = cmp::min(written as u64 + self.chunk_size, bf) as usize;
 
-            trace!("writing {} bytes from chunk {} (mapping to block_idx:{} / block_pos:{})", buf_end, chunk_idx, block_idx, block_pos);
+            trace!(
+                "writing {} bytes from chunk {} (mapping to block_idx:{} / block_pos:{})",
+                buf_end,
+                chunk_idx,
+                block_idx,
+                block_pos
+            );
 
-            written +=
-                self.blocks[block_idx as usize].write(block_pos, &buf[written..buf_end])?;
+            written += self.blocks[block_idx as usize].write(block_pos, &buf[written..buf_end])?;
         }
 
         // size is the largest (offset + written buffer)
@@ -211,6 +216,7 @@ mod tests {
     use crate::vfs::VirtualFile;
     use std::collections::HashMap;
     use std::path::PathBuf;
+    use crate::VFS_DEFAULT_BLOCK_SIZE;
 
     fn gen_virtual_file() -> VirtualFile {
         let mut buckets = HashMap::new();
@@ -230,7 +236,7 @@ mod tests {
         VirtualFile {
             ino: rand::random(),
             size: 0,
-            chunk_size: 4096,
+            chunk_size: VFS_DEFAULT_BLOCK_SIZE,
             blocks: Vec::new(),
             block_size: VIRTUAL_BLOCK_DEFAULT_SIZE,
             config: Some(ShmrFsConfig {
@@ -273,5 +279,4 @@ mod tests {
 
         assert_eq!(buf, data);
     }
-
 }

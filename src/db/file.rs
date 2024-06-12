@@ -1,12 +1,12 @@
-use log::trace;
-use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::params;
 use crate::config::ShmrError;
 use crate::db::now_unix;
 use crate::vfs::block::VirtualBlock;
 use crate::vfs::path::VirtualPath;
 use crate::vfs::VirtualFile;
+use log::trace;
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::params;
 
 #[derive(Clone, Debug)]
 pub struct FileDB {
@@ -46,7 +46,7 @@ impl FileDB {
         let mut rtn = vec![];
 
         let mut rows = stmt.query(params![&ino])?;
-        while let Some(row) = rows. next()? {
+        while let Some(row) = rows.next()? {
             let topology: String = row.get(2)?;
             let mut block = VirtualBlock::new();
             block.idx = row.get(0)?;
@@ -66,7 +66,6 @@ impl FileDB {
             }
 
             rtn.push(block);
-
         }
 
         Ok(rtn)
@@ -137,7 +136,7 @@ mod tests {
         let block: u64 = 9957;
         let pos: u64 = 1234456;
 
-        let buf =create_chunk_pointer(block, pos);
+        let buf = create_chunk_pointer(block, pos);
         assert_eq!(buf.len(), 16); // u64 = 8 bytes. x 2
 
         let (new_block, new_pos) = parse_chunk_pointer(buf);

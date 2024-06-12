@@ -1,21 +1,17 @@
+use base64::prelude::*;
+use log::{debug, error, info, trace, warn};
 use parking_lot::{ArcRwLockReadGuard, ArcRwLockWriteGuard, RawRwLock, RwLock};
-use std::collections::BTreeMap;
-use log::{debug, error, info, trace};
 use serde::{de::DeserializeOwned, Serialize};
+use std::collections::BTreeMap;
 use std::fmt::Debug;
-use std::hash::Hash;
-use std::ops::Deref;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::thread;
-use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
-use base64::prelude::*;
-use log::{debug, error, warn};
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
+use std::sync::Arc;
+use crate::tasks::{WorkerTask, WorkerThread};
 
-pub trait StorageBackend {
+pub trait StorageBackend: Debug + Send + Sync {
     /// Open the StorageBackend
     fn open(&self) -> Result<(), BunnyError>;
 
@@ -27,16 +23,19 @@ pub trait StorageBackend {
 
     fn exists(&self, key: &[u8]) -> bool;
 
-    /// Write the given key,value pair
+    /// Write the given key,value pair to disk.
+    /// This assumes that the data is fully persisted upon return
     fn save(&self, key: &[u8], val: &[u8]) -> Result<(), BunnyError>;
 }
 
+#[derive(Clone, Debug)]
 pub struct FilePerKey {
-    pub base_dir: PathBuf
+    pub base_dir: PathBuf,
 }
 impl FilePerKey {
     fn get_path(&self, key: &[u8]) -> PathBuf {
-        self.base_dir.join(format!("{}.toml", BASE64_STANDARD.encode(key)))
+        self.base_dir
+            .join(format!("{}.yaml", String::from_utf8(key.to_vec()).unwrap()))
     }
 
     fn read_file(&self, path: PathBuf) -> Result<Vec<u8>, BunnyError> {
@@ -50,6 +49,7 @@ impl FilePerKey {
     }
 
     fn write_file(&self, path: PathBuf, contents: &[u8]) -> Result<(), BunnyError> {
+        info!("writing to {:?}", &path);
         OpenOptions::new()
             .create(true)
             .write(true)
@@ -83,15 +83,19 @@ impl StorageBackend for FilePerKey {
             if let Some(ext) = path.file_name() {
                 let name = ext.to_str().unwrap().to_string();
 
-                if !name.contains(".toml") {
+                if !name.contains(".yaml") {
                     debug!("skipping {:?}. invalid extension", &path);
                     continue;
                 }
 
                 // the rest of the filename is the key name, and should be base64 encoded
-                let filename = BASE64_STANDARD.decode(&name.replace(".toml", ""));
+                let filename = BASE64_STANDARD.decode(name.replace(".yaml", ""));
                 if filename.is_err() {
-                    warn!("unable to decode {} as a base64 string. {:?}. skipping", name, filename.err().unwrap());
+                    warn!(
+                        "unable to decode {} as a base64 string. {:?}. skipping",
+                        name,
+                        filename.err().unwrap()
+                    );
                     continue;
                 }
 
@@ -114,50 +118,57 @@ impl StorageBackend for FilePerKey {
 }
 const FLUSH_INTERVAL: u64 = 500; // in ms
 
+#[derive(Debug)]
 pub enum BunnyError {
+    EntryExists,
     IOError(std::io::Error),
+    SerializationError(serde_yaml::Error),
 }
 impl From<std::io::Error> for BunnyError {
     fn from(value: std::io::Error) -> Self {
         BunnyError::IOError(value)
     }
 }
-impl From<toml::ser::Error> for BunnyError {
-    fn from(value: toml::ser::Error) -> Self {
-        todo!()
-    }
-}
-impl From<toml::de::Error> for BunnyError {
-    fn from(value: toml::de::Error) -> Self {
-        todo!()
+impl From<serde_yaml::Error> for BunnyError {
+    fn from(value: serde_yaml::Error) -> Self {
+        BunnyError::SerializationError(value)
     }
 }
 
 pub type Entries<K, V> = Arc<RwLock<BTreeMap<K, Arc<RwLock<V>>>>>;
 
 /// Basic In-memory database with persistence.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct DataBunny<
-    K: Serialize + DeserializeOwned + Clone + Send + Sync + Ord + 'static,
+    K: ToString + FromStr + Clone + Send + Sync + Ord + 'static,
     V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
 > {
     entries: Entries<K, V>,
     dirty_entries: Arc<RwLock<Vec<K>>>,
-    storage_backend: Arc<dyn StorageBackend>
+    storage_backend: Arc<dyn StorageBackend>,
+    worker_thread: Option<WorkerThread<BunnyWorker<K, V>>>
 }
 impl<
-    K: Serialize + DeserializeOwned + Clone + Send + Sync + Ord + 'static,
-    V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
-> DataBunny<K, V>
+        K: ToString + FromStr + Clone + Send + Sync + Ord + 'static,
+        V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
+    > DataBunny<K, V>
 {
-    pub fn open(path: PathBuf) -> Result<Self, BunnyError> {
-        let s = Self {
+    pub fn open(path: &Path) -> Result<Self, BunnyError> {
+        let mut s = Self {
             entries: Arc::new(RwLock::new(BTreeMap::new())),
             dirty_entries: Arc::new(RwLock::new(vec![])),
             storage_backend: Arc::new(FilePerKey {
-                base_dir: path
-            })
+                base_dir: path.to_path_buf(),
+            }),
+            worker_thread: None,
         };
+
+        // TODO Load all entries from disk!
+
+        let worker = WorkerThread::new(BunnyWorker::new(s.clone()));
+        worker.spawn();
+
+        s.worker_thread = Some(worker);
 
         Ok(s)
     }
@@ -166,30 +177,34 @@ impl<
         todo!()
     }
 
+    /// Return a copy of the last key in the BTree
+    pub fn last_key(&self) -> K {
+        let binding = self.entries.read();
+        binding.last_key_value().unwrap().0.clone()
+    }
+
     fn mark_dirty(&self, key: &K) {
         let mut h = self.dirty_entries.write();
         h.push(key.clone());
     }
 
     fn decode_entry(&self, buf: Vec<u8>) -> Result<V, BunnyError> {
-        let s = String::from_utf8(buf).unwrap();
-        Ok(toml::from_str(&s)?)
+        Ok(serde_yaml::from_slice(&*buf)?)
     }
 
     fn encode_entry(&self, entry: &V) -> Result<Vec<u8>, BunnyError> {
-        Ok(toml::to_string_pretty(entry)?.as_bytes().to_vec())
+        Ok(serde_yaml::to_string(entry)?.as_bytes().to_vec())
     }
 
     /// Return a read-only copy of the Record
     pub fn get(&self, key: &K) -> Result<Option<ArcRwLockReadGuard<RawRwLock, V>>, BunnyError> {
-
         let entry_handle = self.entries.read();
         if let Some(entry) = entry_handle.get(key) {
-            return Ok(Some(entry.read_arc()))
+            return Ok(Some(entry.read_arc()));
         }
         drop(entry_handle);
 
-        let key_name = toml::to_string(key)?;
+        let key_name = key.to_string();
         if let Some(record) = self.storage_backend.load(key_name.as_bytes())? {
             self.insert(key.clone(), self.decode_entry(record)?)?;
 
@@ -197,21 +212,22 @@ impl<
         } else {
             Ok(None)
         }
-
     }
 
     /// Return a writeable reference to the entry
-    pub fn get_mut(&self, key: &K) -> Result<Option<ArcRwLockWriteGuard<RawRwLock, V>>, BunnyError> {
+    pub fn get_mut(
+        &self,
+        key: &K,
+    ) -> Result<Option<ArcRwLockWriteGuard<RawRwLock, V>>, BunnyError> {
         let entry_handle = self.entries.read();
 
         if let Some(entry) = entry_handle.get(key) {
             self.mark_dirty(key);
-            return Ok(Some(entry.write_arc()))
+            return Ok(Some(entry.write_arc()));
         }
         drop(entry_handle);
 
-        let key_name = toml::to_string(key)?;
-        if let Some(record) = self.storage_backend.load(key_name.as_bytes())? {
+        if let Some(record) = self.storage_backend.load(key.to_string().as_bytes())? {
             self.insert(key.clone(), self.decode_entry(record)?)?;
 
             self.get_mut(key)
@@ -229,58 +245,38 @@ impl<
     /// Insert an entry
     pub fn insert(&self, key: K, value: V) -> Result<(), BunnyError> {
         let mut handle = self.entries.write();
-        let _ =  handle.insert(key, Arc::new(RwLock::new(value)));
+        if handle.contains_key(&key) {
+            return Err(BunnyError::EntryExists);
+        }
+        self.mark_dirty(&key);
+        let _ = handle.insert(key, Arc::new(RwLock::new(value)));
         Ok(())
     }
 
-    // /// Serialize & Flush the given entry to the underlying database, and then flush the database
-    // pub fn flush(&self, ident: &K) -> Result<(), BunnyError> {
-    //     if let Some(inner) = self.entries.get(ident) {
-    //         let raw_id = bincode::serialize(&ident).unwrap();
-    //         let raw = bincode::serialize(&*inner).unwrap();
-    //         let _ = self.db.insert(raw_id, raw).unwrap();
-    //     } else {
-    //         debug!(
-    //             "entity id {:?} does not exist in main map. assuming deleted",
-    //             ident
-    //         );
-    //         // todo!("remove entry from sled Db")
-    //     }
-    //
-    //     // No way around flushing the entire Sled Db here, but this should be the quick part
-    //     let _ = self.db.flush().unwrap();
-    //
-    //     Ok(())
-    // }
-    //
-    // /// Serialize & Flush all entries to the underlying database, and then flush the database
-    // pub fn flush_all(&self) -> Result<(), BunnyError> {
-    //     // lock the dirty list, and hold it until we're done
-    //     let mut handle = self.dirties.write().unwrap();
-    //
-    //     if handle.is_empty() {
-    //         return Ok(());
-    //     }
-    //
-    //     while let Some(entry_id) = handle.pop() {
-    //         if let Some(inner) = self.entries.get(&entry_id) {
-    //             let raw_id = bincode::serialize(&entry_id).unwrap();
-    //             let raw = bincode::serialize(&*inner).unwrap();
-    //             let _ = self.db.insert(raw_id, raw).unwrap();
-    //         } else {
-    //             debug!(
-    //                 "entity id {:?} does not exist in main map. assuming deleted",
-    //                 entry_id
-    //             );
-    //             // todo!("remove entry from sled Db")
-    //         }
-    //     }
-    //
-    //     let bytes = self.db.flush().unwrap();
-    //     debug!("flushed {} bytes to disk", bytes);
-    //
-    //     Ok(())
-    // }
+    /// Serialize & Flush the given entry to the underlying database, and then flush the database
+    pub fn flush(&self, ident: &K) -> Result<(), BunnyError> {
+        if let Some(inner) = self.get(ident)? {
+            let key = ident.to_string();
+            let val = serde_yaml::to_string(&*inner)?.as_bytes().to_vec();
+            self.storage_backend.save(key.as_bytes(), &val)?;
+        }
+        Ok(())
+    }
+
+    pub fn flush_all(&self, dirty: bool) -> Result<(), BunnyError> {
+        // TODO if dirty is true, only do dirty entries. If false, do all of them
+        // lock the dirty list, and hold it until we're done
+        let mut handle = self.dirty_entries.write();
+
+        // TODO Refactor so the dirty marker isn't consumed until the file is written without error. Maybe use https://docs.rs/retry/latest/retry/ or https://docs.rs/retryiter/latest/retryiter/
+        handle.sort();
+        handle.dedup();
+
+        while let Some(entry_id) = handle.pop() {
+            self.flush(&entry_id)?;
+        }
+        Ok(())
+    }
 }
 // impl<
 //     K: Serialize + DeserializeOwned + Clone + Send + Sync + Ord + 'static,
@@ -313,3 +309,80 @@ impl<
 //         }
 //     }
 // }
+
+#[derive(Debug, Clone)]
+struct BunnyWorker<
+    K: ToString + FromStr + Clone + Send + Sync + Ord + 'static,
+    V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
+> {
+    inner: Arc<DataBunny<K, V>>
+}
+impl<
+    K: ToString + FromStr + Clone + Send + Sync + Ord + 'static,
+    V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
+> BunnyWorker<K, V> {
+    fn new(inner: DataBunny<K, V>) -> Self {
+        Self {
+            inner: Arc::new(inner)
+        }
+    }
+}
+impl<
+    K: ToString + FromStr + Clone + Send + Sync + Ord + 'static,
+    V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
+> WorkerTask for BunnyWorker<K, V> {
+    fn pre(&self) {
+        info!("BunnyWorker started");
+    }
+    fn execute(&self) {
+        // TODO every 5th iteration, set flush_all to false so we write everything
+        if let Err(e) = self.inner.flush_all(true) {
+            error!("an error occurred during the DataBunny flush. {:?}", e);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::databunny::DataBunny;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_data_bunny() {
+        use std::path::PathBuf;
+        use std::thread;
+        use std::time::Duration;
+
+        let test_db_path = PathBuf::from("test_db");
+        if !test_db_path.exists() {
+            std::fs::create_dir(&test_db_path).unwrap();
+        }
+
+        // Create new DataBunny instance
+        let mut db =
+            DataBunny::<String, HashMap<String, String>>::open(&test_db_path.clone()).unwrap();
+
+        // Insert a new entry
+        db.insert("test_key".to_string(), HashMap::new()).unwrap();
+
+        // Save the entry
+        db.flush(&"test_key".to_string()).unwrap();
+
+        // Give the operating system a second to write the file to disk fully.
+        thread::sleep(Duration::from_secs(1));
+
+        // // Now it's time to check if the entry has actually been written to the disk.
+        // // This is not a part of your question, but you might want to do this just to make sure
+        // // your setup works as you expected.
+        //
+        // // Reload DataBunny from the disk
+        // let mut db = DataBunny::<String, String>::open(test_db_path).unwrap();
+        //
+        // // Fetch the entry
+        // let entry = db.get(&"test_key".to_string()).unwrap();
+        //
+        // // Unwrap from Arc and RwLock
+        // let entry = entry.unwrap().read();
+        // assert_eq!(*entry, "test_value".to_string());
+    }
+}
