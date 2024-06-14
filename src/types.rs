@@ -1,10 +1,10 @@
+use crate::fuse::time_now;
 use crate::fuse::types::IFileType;
+use crate::vfs::VirtualFile;
 use fuser::FileAttr;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use crate::fuse::time_now;
-use crate::vfs::VirtualFile;
 
 fn system_time_from_time(secs: i64, nsecs: u32) -> SystemTime {
     if secs >= 0 {
@@ -17,7 +17,7 @@ fn system_time_from_time(secs: i64, nsecs: u32) -> SystemTime {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SuperblockEntry {
     pub inode: Inode,
-    pub inode_descriptor: InodeDescriptor
+    pub inode_descriptor: InodeDescriptor,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -62,7 +62,6 @@ pub struct Inode {
     pub xattrs: BTreeMap<Vec<u8>, Vec<u8>>,
 }
 impl Inode {
-
     /// Update the Inode's metadata (ctime, mtime, nlink)
     pub fn update_metadata(&mut self, incr_nlink: i8) {
         if incr_nlink < 0 {

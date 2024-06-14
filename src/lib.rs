@@ -2,9 +2,8 @@ extern crate core;
 
 use crate::config::{ShmrError, ShmrFsConfig};
 use crate::databunny::DataBunny;
-use crate::db::file::FileDB;
-use crate::tasks::flush::{FlushMaster};
-use crate::tasks::WorkerThread;
+// use crate::tasks::flush::FlushMaster;
+// use crate::tasks::WorkerThread;
 use crate::types::SuperblockEntry;
 use dashmap::DashMap;
 use rand::Rng;
@@ -13,7 +12,6 @@ use std::sync::Arc;
 
 pub mod config;
 mod databunny;
-mod db;
 mod dbus;
 mod fuse;
 mod iostat;
@@ -40,7 +38,6 @@ impl ShmrFs {
         Resource::NOFILE
             .set(102400, 409600)
             .expect("unable to set NOFILE limits");
-
 
         Ok(Self {
             superblock: DataBunny::open(&config.metadata_dir).unwrap(),
@@ -75,22 +72,15 @@ impl ShmrFs {
     fn check_access(&self, inode: u64, uid: u32, gid: u32, access_mask: i32) -> bool {
         self.superblock.has(&inode)
             && self
-            .superblock
-            .get(&inode)
-            .unwrap().unwrap().inode
-            .check_access(uid, gid, access_mask)
+                .superblock
+                .get(&inode)
+                .unwrap()
+                .unwrap()
+                .inode
+                .check_access(uid, gid, access_mask)
     }
 }
 
-#[derive(Clone, Debug)]
-struct ShmrFsTasks {
-    flusher: WorkerThread<FlushMaster>,
-}
-impl ShmrFsTasks {
-    fn start(&self) {
-        self.flusher.spawn();
-    }
-}
 
 #[cfg(test)]
 pub mod tests {

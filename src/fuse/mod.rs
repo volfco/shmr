@@ -5,6 +5,7 @@ pub mod types;
 use crate::fuse::magics::*;
 use crate::fuse::types::IFileType;
 use crate::types::{Inode, InodeDescriptor, SuperblockEntry};
+use crate::vfs::VirtualFile;
 use crate::{ShmrFs, VFS_DEFAULT_BLOCK_SIZE};
 use fuser::{
     FileType, Filesystem, KernelConfig, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty,
@@ -16,7 +17,6 @@ use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::os::unix::prelude::OsStrExt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use crate::vfs::VirtualFile;
 // libc::ENOMSG
 
 #[cfg(target_os = "macos")]
@@ -39,17 +39,23 @@ impl ShmrFs {
         if binding.is_none() {
             false
         } else {
-            matches!(binding.unwrap().inode_descriptor, InodeDescriptor::Directory(_))
+            matches!(
+                binding.unwrap().inode_descriptor,
+                InodeDescriptor::Directory(_)
+            )
         }
     }
 
-    fn create_entry(&self,req: &Request<'_>,
-                    parent: u64,
-                    name: &OsStr,
-                    mode: u32,
-                    umask: u32,
-                    rdev: u32,
-                    reply: ReplyEntry) {
+    fn create_entry(
+        &self,
+        req: &Request<'_>,
+        parent: u64,
+        name: &OsStr,
+        mode: u32,
+        umask: u32,
+        rdev: u32,
+        reply: ReplyEntry,
+    ) {
         let file_type = mode as Mode & libc::S_IFMT;
         if file_type != libc::S_IFREG && file_type != libc::S_IFLNK && file_type != libc::S_IFDIR {
             // TODO
@@ -60,7 +66,11 @@ impl ShmrFs {
 
         let mut parent_entry = match self.superblock.get_mut(&parent) {
             Err(err) => {
-                error!("FUSE({}) Unable to load parent inode info. {:?}", req.unique(), err);
+                error!(
+                    "FUSE({}) Unable to load parent inode info. {:?}",
+                    req.unique(),
+                    err
+                );
                 reply.error(libc::EIO);
                 return;
             }
@@ -70,8 +80,8 @@ impl ShmrFs {
                     reply.error(libc::ENOENT);
                     return;
                 }
-                Some(innerinner) => innerinner
-            }
+                Some(innerinner) => innerinner,
+            },
         };
 
         // // check if we have write access to the parent directory
@@ -84,7 +94,11 @@ impl ShmrFs {
 
         if let InodeDescriptor::Directory(entries) = &mut parent_entry.inode_descriptor {
             if entries.contains_key(&name.to_str().unwrap().as_bytes().to_vec()) {
-                warn!("FUSE({}) '{}' already exists in directory", req.unique(), &name.to_str().unwrap());
+                warn!(
+                    "FUSE({}) '{}' already exists in directory",
+                    req.unique(),
+                    &name.to_str().unwrap()
+                );
                 reply.error(libc::EEXIST);
                 return;
             }
@@ -120,17 +134,25 @@ impl ShmrFs {
                 xattrs: BTreeMap::new(),
             };
             let child_descriptor = match file_type {
-                libc::S_IFREG => InodeDescriptor::File(Box::new(VirtualFile::new())),
+                libc::S_IFREG => InodeDescriptor::File(Box::new(VirtualFile::new_with(ino))),
                 // libc::S_IFLNK => InodeDescriptor::Symlink,
                 libc::S_IFDIR => InodeDescriptor::Directory(BTreeMap::new()),
                 _ => unimplemented!(),
             };
 
             let child_addr = child_inode.to_fileattr();
-            if let Err(err) = self.superblock.insert(ino, SuperblockEntry {
-                inode: child_inode,
-                inode_descriptor: child_descriptor }) {
-                error!("FUSE({}) Unable to update Superblock. {:?}", req.unique(), err);
+            if let Err(err) = self.superblock.insert(
+                ino,
+                SuperblockEntry {
+                    inode: child_inode,
+                    inode_descriptor: child_descriptor,
+                },
+            ) {
+                error!(
+                    "FUSE({}) Unable to update Superblock. {:?}",
+                    req.unique(),
+                    err
+                );
                 reply.error(libc::EIO);
                 return;
             }
@@ -140,14 +162,12 @@ impl ShmrFs {
             parent_entry.inode.update_metadata(1);
 
             info!("FUSE({}) created inode", req.unique());
-            reply.entry(
-                &Duration::from_secs(0),
-                &child_addr,
-                0,
-            );
-
+            reply.entry(&Duration::from_secs(0), &child_addr, 0);
         } else {
-            warn!("FUSE({}) attempted to create file under non-directory inode", req.unique());
+            warn!(
+                "FUSE({}) attempted to create file under non-directory inode",
+                req.unique()
+            );
             reply.error(libc::ENOTDIR)
         }
     }
@@ -217,38 +237,58 @@ impl Filesystem for ShmrFs {
         // we already know this exists based on the previous check
         let entry = match self.superblock.get(&parent) {
             Err(err) => {
-                error!("FUSE({}) error encountered when loading Inode {}. {:?}", req.unique(), parent, err);
+                error!(
+                    "FUSE({}) error encountered when loading Inode {}. {:?}",
+                    req.unique(),
+                    parent,
+                    err
+                );
                 reply.error(libc::ENOMSG);
                 return;
             }
-            Ok(inner) => inner.unwrap()
+            Ok(inner) => inner.unwrap(),
         };
 
         let inode_lookup = if let InodeDescriptor::Directory(entries) = &entry.inode_descriptor {
             match entries.get(name.as_bytes()) {
                 Some(entry_inode) => entry_inode,
-                None => { reply.error(libc::ENOENT); return; },
+                None => {
+                    reply.error(libc::ENOENT);
+                    return;
+                }
             }
         } else {
-            error!("FUSE({}) 'lookup' invoked on non Directory Inode", req.unique());
+            error!(
+                "FUSE({}) 'lookup' invoked on non Directory Inode",
+                req.unique()
+            );
             reply.error(libc::ENOMSG);
             return;
         };
 
         match self.superblock.get(inode_lookup) {
             Err(err) => {
-                error!("FUSE({}) error encountered when loading Inode {}. {:?}", req.unique(), parent, err);
+                error!(
+                    "FUSE({}) error encountered when loading Inode {}. {:?}",
+                    req.unique(),
+                    parent,
+                    err
+                );
                 reply.error(libc::ENOMSG)
             }
             Ok(inner) => match inner {
                 None => {
-                    warn!("FUSE({}) error encountered when loading Inode {}. It does not exist", req.unique(), parent);
+                    warn!(
+                        "FUSE({}) error encountered when loading Inode {}. It does not exist",
+                        req.unique(),
+                        parent
+                    );
                     reply.error(libc::ENOENT)
                 }
                 Some(inner_inner) => {
                     reply.entry(&Duration::new(0, 0), &inner_inner.inode.to_fileattr(), 0)
                 }
-            }
+            },
         }
     }
 
@@ -262,11 +302,16 @@ impl Filesystem for ShmrFs {
 
         let entry = match self.superblock.get(&ino) {
             Err(err) => {
-                error!("FUSE({}) error encountered when loading Inode {}. {:?}", req.unique(), ino, err);
+                error!(
+                    "FUSE({}) error encountered when loading Inode {}. {:?}",
+                    req.unique(),
+                    ino,
+                    err
+                );
                 reply.error(libc::ENOMSG);
                 return;
             }
-            Ok(inner) => inner.unwrap()
+            Ok(inner) => inner.unwrap(),
         };
 
         reply.attr(&Duration::new(0, 0), &entry.inode.to_fileattr())
@@ -283,10 +328,10 @@ impl Filesystem for ShmrFs {
         atime: Option<TimeOrNow>,
         mtime: Option<TimeOrNow>,
         ctime: Option<SystemTime>,
-        fh: Option<u64>,
+        _fh: Option<u64>,
         crtime: Option<SystemTime>,
-        chgtime: Option<SystemTime>,
-        bkuptime: Option<SystemTime>,
+        _chgtime: Option<SystemTime>,
+        _bkuptime: Option<SystemTime>,
         flags: Option<u32>,
         reply: ReplyAttr,
     ) {
@@ -303,11 +348,16 @@ impl Filesystem for ShmrFs {
 
         let mut inode_entry = match self.superblock.get_mut(&ino) {
             Err(err) => {
-                error!("FUSE({}) error encountered when loading Inode {}. {:?}", req.unique(), ino, err);
+                error!(
+                    "FUSE({}) error encountered when loading Inode {}. {:?}",
+                    req.unique(),
+                    ino,
+                    err
+                );
                 reply.error(libc::ENOMSG);
                 return;
             }
-            Ok(inner) => inner.unwrap()
+            Ok(inner) => inner.unwrap(),
         };
 
         let inode = &mut inode_entry.inode;
@@ -324,63 +374,63 @@ impl Filesystem for ShmrFs {
         if size.is_some() {
             inode.size = size.unwrap();
         }
-        // if atime.is_some() {
-        //     match atime.unwrap() {
-        //         TimeOrNow::SpecificTime(time) => {
-        //             let since_the_epoch = time
-        //                 .duration_since(UNIX_EPOCH)
-        //                 .expect("Time went backwards");
-        //             inode.atime = (
-        //                 since_the_epoch.as_secs() as i64,
-        //                 since_the_epoch.subsec_nanos(),
-        //             );
-        //         }
-        //         TimeOrNow::Now => {
-        //             let (sec, nsec) = time_now();
-        //             inode.atime = (sec, nsec);
-        //         }
-        //     }
-        // }
-        // if mtime.is_some() {
-        //     match atime.unwrap() {
-        //         TimeOrNow::SpecificTime(time) => {
-        //             let since_the_epoch = time
-        //                 .duration_since(UNIX_EPOCH)
-        //                 .expect("Time went backwards");
-        //             inode.atime = (
-        //                 since_the_epoch.as_secs() as i64,
-        //                 since_the_epoch.subsec_nanos(),
-        //             );
-        //         }
-        //         TimeOrNow::Now => {
-        //             let (sec, nsec) = time_now();
-        //             inode.atime = (sec, nsec);
-        //         }
-        //     }
-        // }
-        // if ctime.is_some() {
-        //     let since_the_epoch = ctime
-        //         .unwrap()
-        //         .duration_since(UNIX_EPOCH)
-        //         .expect("Time went backwards");
-        //     inode.ctime = (
-        //         since_the_epoch.as_secs() as i64,
-        //         since_the_epoch.subsec_nanos(),
-        //     );
-        // }
-        // if crtime.is_some() {
-        //     let since_the_epoch = crtime
-        //         .unwrap()
-        //         .duration_since(UNIX_EPOCH)
-        //         .expect("Time went backwards");
-        //     inode.crtime = (
-        //         since_the_epoch.as_secs() as i64,
-        //         since_the_epoch.subsec_nanos(),
-        //     );
-        // }
-        // if flags.is_some() {
-        //     inode.flags = flags.unwrap();
-        // }
+        if atime.is_some() {
+            match atime.unwrap() {
+                TimeOrNow::SpecificTime(time) => {
+                    let since_the_epoch = time
+                        .duration_since(UNIX_EPOCH)
+                        .expect("Time went backwards");
+                    inode.atime = (
+                        since_the_epoch.as_secs() as i64,
+                        since_the_epoch.subsec_nanos(),
+                    );
+                }
+                TimeOrNow::Now => {
+                    let (sec, nsec) = time_now();
+                    inode.atime = (sec, nsec);
+                }
+            }
+        }
+        if mtime.is_some() {
+            match atime.unwrap() {
+                TimeOrNow::SpecificTime(time) => {
+                    let since_the_epoch = time
+                        .duration_since(UNIX_EPOCH)
+                        .expect("Time went backwards");
+                    inode.atime = (
+                        since_the_epoch.as_secs() as i64,
+                        since_the_epoch.subsec_nanos(),
+                    );
+                }
+                TimeOrNow::Now => {
+                    let (sec, nsec) = time_now();
+                    inode.atime = (sec, nsec);
+                }
+            }
+        }
+        if ctime.is_some() {
+            let since_the_epoch = ctime
+                .unwrap()
+                .duration_since(UNIX_EPOCH)
+                .expect("Time went backwards");
+            inode.ctime = (
+                since_the_epoch.as_secs() as i64,
+                since_the_epoch.subsec_nanos(),
+            );
+        }
+        if crtime.is_some() {
+            let since_the_epoch = crtime
+                .unwrap()
+                .duration_since(UNIX_EPOCH)
+                .expect("Time went backwards");
+            inode.crtime = (
+                since_the_epoch.as_secs() as i64,
+                since_the_epoch.subsec_nanos(),
+            );
+        }
+        if flags.is_some() {
+            inode.flags = flags.unwrap();
+        }
         // if fh.is_some() {
         //     unimplemented!("fh not implemented");
         // }
@@ -401,7 +451,6 @@ impl Filesystem for ShmrFs {
         drop(inode_entry);
     }
 
-
     fn mknod(
         &mut self,
         req: &Request<'_>,
@@ -420,7 +469,6 @@ impl Filesystem for ShmrFs {
         );
 
         self.create_entry(req, parent, name, mode, umask, rdev, reply)
-
     }
 
     fn mkdir(
@@ -441,74 +489,83 @@ impl Filesystem for ShmrFs {
         self.create_entry(req, parent, name, mode, umask, 0, reply)
     }
 
-    // /// Rename a directory entry, possibly moving the entry from one inode to another.
-    // ///
-    // /// Process:
-    // ///   1. Check if we can access the old parent inode
-    // ///   2. Check if we can access the new parent inode
-    // ///   3. Check if we have permissions on the entry's target inode
-    // ///   4. Check if the entry exists in the old parent directory
-    // ///   5. Check if the new entry does not exist in the new parent directory
-    // ///   6. Remove the Directory Entry from the old parent
-    // ///   7. Add the Directory Entry, with the new name, to the new parent
-    // ///
-    // /// TODO Add error handling for operations
-    // fn rename(
-    //     &mut self,
-    //     req: &Request<'_>,
-    //     parent: u64,
-    //     name: &OsStr,
-    //     newparent: u64,
-    //     newname: &OsStr,
-    //     _flags: u32,
-    //     reply: ReplyEmpty,
-    // ) {
-    //     trace!("FUSE({}) 'rename' invoked for parent {} with name {:?} to new parent {} with new name {:?}", req.unique(), parent, name, newparent, newname);
-    //
-    //     let parent_access = self.inode_db.check_access(parent, req, 0).unwrap();
-    //     let newparent_access = self.inode_db.check_access(newparent, req, 0).unwrap();
-    //
-    //     // if we don't have access to either the parent, or newparent- fail the operation
-    //     if parent_access || newparent_access {
-    //         reply.error(libc::EACCES);
-    //         return;
-    //     }
-    //
-    //     // check if the entry exists
-    //     let old_entry = self
-    //         .inode_db
-    //         .get_directory_entry_inode(parent, name.to_str().unwrap())
-    //         .unwrap();
-    //
-    //     if old_entry.is_none() {
-    //         reply.error(libc::ENOENT);
-    //         return;
-    //     }
-    //
-    //     // check if the new entry exists
-    //     let new_entry = self
-    //         .inode_db
-    //         .get_directory_entry_inode(newparent, newname.to_str().unwrap())
-    //         .unwrap();
-    //
-    //     if new_entry.is_some() {
-    //         reply.error(libc::EEXIST);
-    //         return;
-    //     }
-    //
-    //     // remove the entry from the old directory
-    //     self.inode_db
-    //         .remove_directory_entry(parent, name.to_str().unwrap())
-    //         .unwrap();
-    //
-    //     // add the entry to the new directory
-    //     // old_entry contains the entry's target inode
-    //     self.inode_db
-    //         .add_directory_entry(newparent, newname.to_str().unwrap(), old_entry.unwrap())
-    //         .unwrap();
-    //
-    //     reply.ok();
-    // }
+    /// Rename a directory entry, possibly moving the entry from one inode to another.
+    ///
+    /// Process:
+    ///   1. Check if we can access the old parent inode
+    ///   2. Check if we can access the new parent inode
+    ///   3. Check if we have permissions on the entry's target inode
+    ///   4. Check if the entry exists in the old parent directory
+    ///   5. Check if the new entry does not exist in the new parent directory
+    ///   6. Remove the Directory Entry from the old parent
+    ///   7. Add the Directory Entry, with the new name, to the new parent
+    ///
+    /// TODO Add error handling for operations
+    fn rename(
+        &mut self,
+        req: &Request<'_>,
+        parent: u64,
+        name: &OsStr,
+        newparent: u64,
+        newname: &OsStr,
+        _flags: u32,
+        reply: ReplyEmpty,
+    ) {
+        trace!("FUSE({}) 'rename' invoked for parent {} with name {:?} to new parent {} with new name {:?}", req.unique(), parent, name, newparent, newname);
+
+        if !self.superblock.has(&parent) || !self.superblock.has(&newparent) {
+            reply.error(libc::ENOENT);
+            return;
+        }
+
+        // TODO Refactor this to make it safer
+        // fuck this function
+        if newparent == parent {
+            let mut parent = self.superblock.get_mut(&parent).unwrap().unwrap();
+            if let InodeDescriptor::Directory(contents) = &mut parent.inode_descriptor {
+                if !contents.contains_key(&name.as_bytes().to_vec()) {
+                    info!("FUSE({}) Inode {:?} does not have an entry for '{:?}'", req.unique(), &parent, &name);
+                    reply.error(libc::ENOENT);
+                    return;
+                }
+                let ino = contents.remove(&name.as_bytes().to_vec());
+                contents.insert(newname.as_bytes().to_vec(), ino.unwrap());
+            }
+        } else {
+            let mut old_parent = self.superblock.get_mut(&parent).unwrap().unwrap();
+            let mut new_parent = self.superblock.get_mut(&newparent).unwrap().unwrap();
+
+            if let InodeDescriptor::Directory(contents) = &old_parent.inode_descriptor {
+                if !contents.contains_key(&name.as_bytes().to_vec()) {
+                    info!("FUSE({}) Inode {} does not have an entry for '{:?}'", req.unique(), &parent, &name);
+                    reply.error(libc::ENOENT);
+                    return;
+                }
+            }
+            if let InodeDescriptor::Directory(contents) = &new_parent.inode_descriptor {
+                if !contents.contains_key(&newname.as_bytes().to_vec()) {
+                    info!("FUSE({}) Inode {:?} does not have an entry for '{:?}'", req.unique(), &newparent, &newname);
+                    reply.error(libc::ENOENT);
+                    return;
+                }
+            }
+
+            // remove the entry from the old inode
+            if let InodeDescriptor::Directory(contents) = &mut old_parent.inode_descriptor {
+                let ino = contents.remove(&name.as_bytes().to_vec());
+                if ino.is_none() {
+                    panic!("at the disco")
+                }
+                if let InodeDescriptor::Directory(contents) = &mut new_parent.inode_descriptor {
+                    let _ = contents.insert(newname.as_bytes().to_vec(), ino.unwrap());
+                }
+            }
+        }
+
+
+        reply.ok();
+    }
+
 
     fn open(&mut self, req: &Request<'_>, ino: u64, flags: i32, reply: ReplyOpen) {
         trace!(
@@ -585,10 +642,10 @@ impl Filesystem for ShmrFs {
                 Ok(_) => reply.data(&buffer),
                 Err(e) => {
                     error!(
-                    "FUSE({}) Failed to read data to file: {:?}",
-                    req.unique(),
-                    e
-                );
+                        "FUSE({}) Failed to read data to file: {:?}",
+                        req.unique(),
+                        e
+                    );
                     reply.error(libc::EIO)
                 }
             }
@@ -631,21 +688,25 @@ impl Filesystem for ShmrFs {
         let mut inode_entry = inode_entry.unwrap();
         if let InodeDescriptor::File(vf) = &mut inode_entry.inode_descriptor {
             match vf.write(offset, data) {
-                Ok(amt) => reply.written(amt as u32),
+                Ok(amt) => {
+                    // update the inode
+                    inode_entry.inode.size = vf.size;
+                    inode_entry.inode.update_metadata(0);
+
+                    reply.written(amt as u32)
+                }
                 Err(e) => {
                     error!(
-                    "FUSE({}) Failed to write data to file: {:?}",
-                    req.unique(),
-                    e
-                );
+                        "FUSE({}) Failed to write data to file: {:?}",
+                        req.unique(),
+                        e
+                    );
                     reply.error(libc::EIO)
                 }
             }
         } else {
             panic!("attempted to write to non-file inode")
         }
-
-
     }
 
     fn release(
@@ -684,8 +745,8 @@ impl Filesystem for ShmrFs {
         }
     }
 
-    fn fsync(&mut self, req: &Request<'_>, ino: u64, _fh: u64, datasync: bool, reply: ReplyEmpty) {
-        trace!("FUSE({}) 'fsync' invoked on inode {}", req.unique(), ino);
+    fn fsync(&mut self, req: &Request<'_>, ino: u64, _fh: u64, _datasync: bool, reply: ReplyEmpty) {
+        info!("FUSE({}) 'fsync' invoked on inode {}", req.unique(), ino);
 
         // get the inode
         let inode_entry = self.superblock.get(&ino).unwrap();
@@ -695,19 +756,28 @@ impl Filesystem for ShmrFs {
             return;
         }
 
-        let mut inode_entry = inode_entry.unwrap();
+        let inode_entry = inode_entry.unwrap();
         if let InodeDescriptor::File(file) = &inode_entry.inode_descriptor {
             if let Err(e) = file.sync_data(true) {
-                warn!("FUSE({}) Error occurred when attempting to sync inode {}. {:?}", req.unique(), ino, e);
+                warn!(
+                    "FUSE({}) Error occurred when attempting to sync inode {}. {:?}",
+                    req.unique(),
+                    ino,
+                    e
+                );
             }
             // TODO take datasync into consideration
-            if let Err(e) =  self.superblock.flush(&ino) {
-                warn!("FUSE({}) Error occurred when attempting to sync inode {} metadata. {:?}", req.unique(), ino, e);
+            if let Err(e) = self.superblock.flush(&ino) {
+                warn!(
+                    "FUSE({}) Error occurred when attempting to sync inode {} metadata. {:?}",
+                    req.unique(),
+                    ino,
+                    e
+                );
             }
         } else {
             reply.error(libc::ENOMSG)
         }
-
     }
 
     /// Open a directory.
@@ -769,7 +839,6 @@ impl Filesystem for ShmrFs {
         }
         let entry = binding.unwrap();
         if let InodeDescriptor::Directory(entries) = &entry.inode_descriptor {
-
             for (idx, entry) in entries.iter().skip(offset as usize).enumerate() {
                 let file_name = OsStr::from_bytes(entry.0.as_slice());
                 trace!(

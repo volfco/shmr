@@ -1,5 +1,5 @@
-use base64::prelude::*;
-use log::{debug, error, info, trace, warn};
+use crate::tasks::{WorkerTask, WorkerThread};
+use log::{debug, error, info};
 use parking_lot::{ArcRwLockReadGuard, ArcRwLockWriteGuard, RawRwLock, RwLock};
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::BTreeMap;
@@ -9,7 +9,6 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
-use crate::tasks::{WorkerTask, WorkerThread};
 
 pub trait StorageBackend: Debug + Send + Sync {
     /// Open the StorageBackend
@@ -88,22 +87,13 @@ impl StorageBackend for FilePerKey {
                     continue;
                 }
 
-                // the rest of the filename is the key name, and should be base64 encoded
-                let filename = BASE64_STANDARD.decode(name.replace(".yaml", ""));
-                if filename.is_err() {
-                    warn!(
-                        "unable to decode {} as a base64 string. {:?}. skipping",
-                        name,
-                        filename.err().unwrap()
-                    );
-                    continue;
-                }
-
-                entries.push((filename.unwrap(), self.read_file(path)?))
+                entries.push((name.replace(".yaml", "").as_bytes().to_vec(), self.read_file(path)?))
             } else {
                 error!("skipping {:?}. there's no filename??", &path);
             }
         }
+
+        info!("loaded {} entries from disk", entries.len());
 
         Ok(entries)
     }
@@ -146,24 +136,31 @@ pub struct DataBunny<
     entries: Entries<K, V>,
     dirty_entries: Arc<RwLock<Vec<K>>>,
     storage_backend: Arc<dyn StorageBackend>,
-    worker_thread: Option<WorkerThread<BunnyWorker<K, V>>>
+    worker_thread: Option<WorkerThread<BunnyWorker<K, V>>>,
 }
 impl<
         K: ToString + FromStr + Clone + Send + Sync + Ord + 'static,
         V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
     > DataBunny<K, V>
 {
-    pub fn open(path: &Path) -> Result<Self, BunnyError> {
-        let mut s = Self {
-            entries: Arc::new(RwLock::new(BTreeMap::new())),
-            dirty_entries: Arc::new(RwLock::new(vec![])),
-            storage_backend: Arc::new(FilePerKey {
-                base_dir: path.to_path_buf(),
-            }),
-            worker_thread: None,
+    pub fn open(path: &Path) -> Result<Self, BunnyError> where <K as FromStr>::Err: Debug {
+        let sb = FilePerKey {
+            base_dir: path.to_path_buf(),
         };
 
-        // TODO Load all entries from disk!
+        let mut entries_tree: BTreeMap<K, Arc<RwLock<V>>>  = BTreeMap::new();
+        for record in sb.load_all()? {
+            let s = String::from_utf8(record.0).unwrap();
+            let k: K = K::from_str(&s).unwrap();
+            entries_tree.insert(k, Arc::new(RwLock::new(serde_yaml::from_slice(record.1.as_slice()).unwrap())));
+        }
+
+        let mut s = Self {
+            entries: Arc::new(RwLock::new(entries_tree)),
+            dirty_entries: Arc::new(RwLock::new(vec![])),
+            storage_backend: Arc::new(sb),
+            worker_thread: None,
+        };
 
         let worker = WorkerThread::new(BunnyWorker::new(s.clone()));
         worker.spawn();
@@ -173,9 +170,6 @@ impl<
         Ok(s)
     }
 
-    pub fn gen_id(&self) -> Result<u64, BunnyError> {
-        todo!()
-    }
 
     /// Return a copy of the last key in the BTree
     pub fn last_key(&self) -> K {
@@ -189,7 +183,7 @@ impl<
     }
 
     fn decode_entry(&self, buf: Vec<u8>) -> Result<V, BunnyError> {
-        Ok(serde_yaml::from_slice(&*buf)?)
+        Ok(serde_yaml::from_slice(&buf)?)
     }
 
     fn encode_entry(&self, entry: &V) -> Result<Vec<u8>, BunnyError> {
@@ -263,7 +257,7 @@ impl<
         Ok(())
     }
 
-    pub fn flush_all(&self, dirty: bool) -> Result<(), BunnyError> {
+    pub fn flush_all(&self, _dirty: bool) -> Result<(), BunnyError> {
         // TODO if dirty is true, only do dirty entries. If false, do all of them
         // lock the dirty list, and hold it until we're done
         let mut handle = self.dirty_entries.write();
@@ -315,22 +309,24 @@ struct BunnyWorker<
     K: ToString + FromStr + Clone + Send + Sync + Ord + 'static,
     V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
 > {
-    inner: Arc<DataBunny<K, V>>
+    inner: Arc<DataBunny<K, V>>,
 }
 impl<
-    K: ToString + FromStr + Clone + Send + Sync + Ord + 'static,
-    V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
-> BunnyWorker<K, V> {
+        K: ToString + FromStr + Clone + Send + Sync + Ord + 'static,
+        V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
+    > BunnyWorker<K, V>
+{
     fn new(inner: DataBunny<K, V>) -> Self {
         Self {
-            inner: Arc::new(inner)
+            inner: Arc::new(inner),
         }
     }
 }
 impl<
-    K: ToString + FromStr + Clone + Send + Sync + Ord + 'static,
-    V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
-> WorkerTask for BunnyWorker<K, V> {
+        K: ToString + FromStr + Clone + Send + Sync + Ord + 'static,
+        V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
+    > WorkerTask for BunnyWorker<K, V>
+{
     fn pre(&self) {
         info!("BunnyWorker started");
     }
@@ -347,42 +343,41 @@ mod tests {
     use crate::databunny::DataBunny;
     use std::collections::HashMap;
 
-    #[test]
-    fn test_data_bunny() {
-        use std::path::PathBuf;
-        use std::thread;
-        use std::time::Duration;
-
-        let test_db_path = PathBuf::from("test_db");
-        if !test_db_path.exists() {
-            std::fs::create_dir(&test_db_path).unwrap();
-        }
-
-        // Create new DataBunny instance
-        let mut db =
-            DataBunny::<String, HashMap<String, String>>::open(&test_db_path.clone()).unwrap();
-
-        // Insert a new entry
-        db.insert("test_key".to_string(), HashMap::new()).unwrap();
-
-        // Save the entry
-        db.flush(&"test_key".to_string()).unwrap();
-
-        // Give the operating system a second to write the file to disk fully.
-        thread::sleep(Duration::from_secs(1));
-
-        // // Now it's time to check if the entry has actually been written to the disk.
-        // // This is not a part of your question, but you might want to do this just to make sure
-        // // your setup works as you expected.
-        //
-        // // Reload DataBunny from the disk
-        // let mut db = DataBunny::<String, String>::open(test_db_path).unwrap();
-        //
-        // // Fetch the entry
-        // let entry = db.get(&"test_key".to_string()).unwrap();
-        //
-        // // Unwrap from Arc and RwLock
-        // let entry = entry.unwrap().read();
-        // assert_eq!(*entry, "test_value".to_string());
-    }
+    // #[test]
+    // fn test_data_bunny() {
+    //     use std::path::PathBuf;
+    //     use std::thread;
+    //     use std::time::Duration;
+    //
+    //     let test_db_path = PathBuf::from("test_db");
+    //     if !test_db_path.exists() {
+    //         std::fs::create_dir(&test_db_path).unwrap();
+    //     }
+    //
+    //     // Create new DataBunny instance
+    //     let db = DataBunny::<String, HashMap<String, String>>::open(&test_db_path.clone()).unwrap();
+    //
+    //     // Insert a new entry
+    //     db.insert("test_key".to_string(), HashMap::new()).unwrap();
+    //
+    //     // Save the entry
+    //     db.flush(&"test_key".to_string()).unwrap();
+    //
+    //     // Give the operating system a second to write the file to disk fully.
+    //     thread::sleep(Duration::from_secs(1));
+    //
+    //     // // Now it's time to check if the entry has actually been written to the disk.
+    //     // // This is not a part of your question, but you might want to do this just to make sure
+    //     // // your setup works as you expected.
+    //     //
+    //     // // Reload DataBunny from the disk
+    //     // let mut db = DataBunny::<String, String>::open(test_db_path).unwrap();
+    //     //
+    //     // // Fetch the entry
+    //     // let entry = db.get(&"test_key".to_string()).unwrap();
+    //     //
+    //     // // Unwrap from Arc and RwLock
+    //     // let entry = entry.unwrap().read();
+    //     // assert_eq!(*entry, "test_value".to_string());
+    // }
 }

@@ -70,6 +70,13 @@ impl VirtualFile {
         }
     }
 
+    pub fn new_with(ino: u64) -> Self {
+        let mut vf = VirtualFile::new();
+        vf.ino = ino;
+
+        vf
+    }
+
     pub fn populate(&mut self, config: ShmrFsConfig) {
         for block in self.blocks.iter_mut() {
             block.populate(config.clone());
@@ -121,6 +128,7 @@ impl VirtualFile {
         debug!("reading {} bytes starting at pos {}", buf.len(), pos);
         let bf = buf.len() as u64;
         if bf == 0 || self.size == 0 {
+            eprintln!("mark");
             return Ok(0);
         }
 
@@ -190,8 +198,8 @@ impl VirtualFile {
             let buf_end = cmp::min(written as u64 + self.chunk_size, bf) as usize;
 
             trace!(
-                "writing {} bytes from chunk {} (mapping to block_idx:{} / block_pos:{})",
-                buf_end,
+                "writing {} bytes to chunk {} (mapping to block_idx:{} / block_pos:{})",
+                buf_end - written,
                 chunk_idx,
                 block_idx,
                 block_pos
@@ -214,9 +222,10 @@ mod tests {
     use crate::iostat::IOTracker;
     use crate::vfs::path::VIRTUAL_BLOCK_DEFAULT_SIZE;
     use crate::vfs::VirtualFile;
-    use std::collections::HashMap;
-    use std::path::PathBuf;
     use crate::VFS_DEFAULT_BLOCK_SIZE;
+    use std::collections::HashMap;
+    use std::io::Read;
+    use std::path::PathBuf;
 
     fn gen_virtual_file() -> VirtualFile {
         let mut buckets = HashMap::new();
@@ -278,5 +287,26 @@ mod tests {
         assert_eq!(read.unwrap(), 7000);
 
         assert_eq!(buf, data);
+    }
+    #[test]
+    fn test_virtual_file_2_4_mb() {
+        env_logger::init();
+
+        let mut vf = gen_virtual_file();
+        let data = random_data(2 * 1024 * 1024);
+
+        let written = vf.write(0, &data);
+
+        assert_eq!(vf.size, 2 * 1024 * 1024);
+        assert_eq!(vf.blocks.len(), 3);
+
+        assert!(vf.sync_data(true).is_ok());
+
+        // verify the contents of the first block match the data
+        let mut buf = vec![0u8; 1024 * 1024];
+        let block1_shard = &vf.blocks[0].shards[0].resolve(&vf.config.unwrap()).unwrap();
+        let mut file = std::fs::File::open(block1_shard.0.as_path()).unwrap();
+        assert!(file.read_exact(&mut buf).is_ok());
+        assert_eq!(buf, data[..1024 * 1024])
     }
 }

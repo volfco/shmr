@@ -165,6 +165,7 @@ impl VirtualBlock {
         self.size
     }
 
+    /// Create an empty VirtualBlock.
     pub fn create(
         ino: u64,
         idx: u64,
@@ -259,7 +260,7 @@ impl VirtualBlock {
 
     pub fn write(&self, pos: u64, buf: &[u8]) -> Result<usize, ShmrError> {
         trace!(
-            "[{}:{:#016x}] writing {} bytes at {}",
+            "[{}:{:#016x}] writing {} bytes at offset {}",
             self.ino,
             self.idx,
             buf.len(),
@@ -298,6 +299,7 @@ impl VirtualBlock {
         //     );
         //     self.sync_data()?;
         // }
+        // self.sync_data(true)?;
         self.should_flush.store(false, Ordering::Relaxed);
 
         Ok(written)
@@ -307,14 +309,14 @@ impl VirtualBlock {
     pub fn sync_data(&self, force: bool) -> Result<(), ShmrError> {
         // Don't sync if we're not being forced to, and no writes have occured
         if !force && !self.should_flush.load(Ordering::Relaxed) {
+            debug!(
+                "[{}:{:#016x}] skipping buffer sync. not forced and not required to",
+                self.ino, self.idx,
+            );
             return Ok(());
         }
 
-        trace!(
-                "[{}:{:#016x}] syncing buffer",
-                self.ino,
-                self.idx,
-            );
+        trace!("[{}:{:#016x}] syncing buffer", self.ino, self.idx,);
         if !self.shard_loaded.load(Ordering::Relaxed) {
             self.open_handles()?;
         }
@@ -563,6 +565,41 @@ mod tests {
             assert!(path.is_ok());
             assert!(path.unwrap().0.exists())
         }
+    }
+
+    #[test]
+    fn test_virtual_block_unbuffered_backing() {
+        let cfg = get_shmr_config();
+
+        let block = VirtualBlock::create(3, 0, &cfg, 1024, BlockTopology::Single);
+        assert!(block.is_ok());
+
+        let block = block.unwrap();
+
+        let shard_path = block.shards[0].resolve(&cfg).unwrap();
+
+        let data = random_data(500);
+        let written = block.write(0, &data);
+        assert!(written.is_ok(), "{:?}", written.err());
+
+        block.sync_data(true).unwrap();
+        assert_eq!(shard_path.0.metadata().unwrap().size() as usize, data.len());
+
+        // drop the buffers and ensure they are empty
+        assert!(block.drop_buffer().is_ok());
+        assert!(!block.buffer_loaded.load(Ordering::Relaxed));
+        {
+            let buf_lock = block.buffer.lock().unwrap();
+            assert_eq!(buf_lock.len(), 0);
+        }
+
+        let shard_path = block.shards[0].resolve(&cfg).unwrap();
+        let mut buf = vec![0; 500];
+
+        let mut file = File::open(&shard_path.0).unwrap();
+        file.read_exact(&mut buf).unwrap();
+
+        assert_eq!(buf, data)
     }
 
     #[test]
