@@ -58,13 +58,19 @@ impl TryFrom<String> for BlockTopology {
         match name {
             "Single" => Ok(BlockTopology::Single),
             "Mirror" => {
-                let n: u8 = arg.trim_end_matches(')').parse().map_err(|_| format!("Unable to parse {}. {} - {}", value, name, arg))?;
+                let n: u8 = arg
+                    .trim_end_matches(')')
+                    .parse()
+                    .map_err(|_| format!("Unable to parse {}. {} - {}", value, name, arg))?;
                 Ok(BlockTopology::Mirror(n))
             }
             "Erasure" => {
                 let params: Vec<&str> = arg.splitn(3, ',').collect();
                 eprintln!("params: {:?}", &params);
-                let v: u8 = params[0].trim().parse().map_err(|_| format!("Unable to parse version {:?}", params))?;
+                let v: u8 = params[0]
+                    .trim()
+                    .parse()
+                    .map_err(|_| format!("Unable to parse version {:?}", params))?;
                 let ds: u8 = params
                     .get(1)
                     .unwrap_or(&"")
@@ -75,7 +81,8 @@ impl TryFrom<String> for BlockTopology {
                 let ps: u8 = params
                     .get(2)
                     .unwrap_or(&"")
-                    .trim().trim_end_matches(')')
+                    .trim()
+                    .trim_end_matches(')')
                     .parse()
                     .map_err(|_| format!("Unable to parse parity shards {:?}", params))?;
                 Ok(BlockTopology::Erasure(v, ds, ps))
@@ -190,9 +197,12 @@ impl VirtualBlock {
         config: &ShmrFsConfig,
         size: u64,
         topology: BlockTopology,
-        pool: &str
+        pool: &str,
     ) -> Result<Self, ShmrError> {
-        debug!("[{}:{:#016x}] creating new VirtualBlock of size {} in pool '{}'", ino, idx, size, pool);
+        debug!(
+            "[{}:{:#016x}] creating new VirtualBlock of size {} in pool '{}'",
+            ino, idx, size, pool
+        );
 
         let (needed_shards, ident) = match &topology {
             BlockTopology::Single => (1, "single".to_string()),
@@ -326,7 +336,7 @@ impl VirtualBlock {
 
     /// Sync-Flush- the buffers to disk.
     pub fn sync_data(&self, force: bool) -> Result<(), ShmrError> {
-        // Don't sync if we're not being forced to, and no writes have occured
+        // Don't sync if we're not being forced and no writes have occurred
         if !force && !self.should_flush.load(Ordering::Relaxed) {
             debug!(
                 "[{}:{:#016x}] skipping buffer sync. not forced and not required to",
@@ -340,13 +350,12 @@ impl VirtualBlock {
             self.open_handles()?;
         }
 
-        let shard_file_handles = self.shard_handles.lock().unwrap();
         let buffer = self.buffer.lock().unwrap();
-
         if buffer.is_empty() {
             return Ok(());
         }
 
+        let shard_file_handles = self.shard_handles.lock().unwrap();
         match self.topology {
             BlockTopology::Single => {
                 let shard = &shard_file_handles[0].1;
@@ -434,21 +443,23 @@ impl VirtualBlock {
             // https://www.youtube.com/watch?v=gAYL5H46QnQ
             let _ = mem::take(&mut *shard_file_handles);
         }
-
-        for shard in &self.shards {
+        let shard_copies = self.shards.clone();
+        for shard in shard_copies {
             let shard_path = shard.resolve(pools)?;
-            let shard_file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(&shard_path.0)?;
 
             trace!(
                 "[{}:{:#016x}] opening {:?}",
                 self.ino,
                 self.idx,
-                shard_path.0
+                &shard_path.0
             );
-            shard_file_handles.push((shard.clone(), shard_file));
+            shard_file_handles.push((
+                shard,
+                OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&shard_path.0)?,
+            ));
         }
 
         self.shard_loaded.store(true, Ordering::Relaxed);

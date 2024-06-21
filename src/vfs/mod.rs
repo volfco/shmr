@@ -7,8 +7,8 @@ use crate::vfs::path::VIRTUAL_BLOCK_DEFAULT_SIZE;
 use crate::{ShmrError, VFS_DEFAULT_BLOCK_SIZE};
 use log::{debug, trace, warn};
 use serde::{Deserialize, Serialize};
-use std::{cmp, mem};
 use std::time::Instant;
+use std::{cmp, mem};
 
 fn calculate_shard_size(length: u64, data_shards: u8) -> usize {
     (length as f32 / data_shards as f32).ceil() as usize
@@ -215,10 +215,14 @@ impl VirtualFile {
         Ok(written)
     }
 
-    pub fn replace_block(&mut self, block_idx: usize, new_block: VirtualBlock) -> Result<(), ShmrError> {
+    pub fn replace_block(
+        &mut self,
+        block_idx: usize,
+        new_block: VirtualBlock,
+    ) -> Result<(), ShmrError> {
         if block_idx >= self.blocks.len() {
             warn!("Requested Block Index is greater than total blocks");
-            return Err(ShmrError::BlockIndexOutOfBounds)
+            return Err(ShmrError::BlockIndexOutOfBounds);
         }
         let old_block = self.blocks.get_mut(block_idx).unwrap();
 

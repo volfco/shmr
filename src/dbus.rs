@@ -1,10 +1,10 @@
+use crate::types::InodeDescriptor;
+use crate::vfs::block::{BlockTopology, VirtualBlock};
+use crate::ShmrFs;
 use dbus::blocking::Connection;
-use dbus::{MethodErr};
+use dbus::MethodErr;
 use dbus_crossroads::{Context, Crossroads};
 use log::{error, info};
-use crate::ShmrFs;
-use crate::types::{InodeDescriptor};
-use crate::vfs::block::{BlockTopology, VirtualBlock};
 
 pub fn dbus_server(shmr_fs: ShmrFs) -> Result<(), dbus::Error> {
     let c = Connection::new_session()?;
@@ -87,7 +87,11 @@ pub fn dbus_server(shmr_fs: ShmrFs) -> Result<(), dbus::Error> {
 
     let relative_path = shmr_fs.config.mount_dir.canonicalize().unwrap();
 
-    cr.insert(relative_path.to_str().unwrap().to_string(), &[iface_token], shmr_fs);
+    cr.insert(
+        relative_path.to_str().unwrap().to_string(),
+        &[iface_token],
+        shmr_fs,
+    );
 
     info!("starting dbus interface");
 

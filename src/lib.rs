@@ -47,9 +47,7 @@ impl ShmrFs {
         };
 
         let dbus_shmr = shmr.clone();
-        std::thread::spawn(move || {
-            dbus::dbus_server(dbus_shmr)
-        });
+        std::thread::spawn(move || dbus::dbus_server(dbus_shmr));
 
         Ok(shmr)
     }
@@ -87,7 +85,6 @@ impl ShmrFs {
                 .check_access(uid, gid, access_mask)
     }
 }
-
 
 #[cfg(test)]
 pub mod tests {

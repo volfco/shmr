@@ -2,15 +2,16 @@ use bytesize::ByteSize;
 use log::debug;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Error;
+use std::ops::Deref;
 use std::path::PathBuf;
 use sysinfo::Disks;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MetadataFormat {
     Yaml,
-    BrotliYaml
+    BrotliYaml,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,18 +20,16 @@ pub struct ShmrFsConfig {
     pub metadata_dir: PathBuf,
 
     // pub metdata_format: MetadataFormat,
-
     /// Directory where the FUSE Filesystem will be mounted
     pub mount_dir: PathBuf,
 
     /// Pool -> Bucket Map
-    pub pools: HashMap<String, HashMap<String, Bucket>>,
+    pub pools: BTreeMap<String, HashMap<String, Bucket>>,
 
     /// Write Pool
     pub write_pool: String,
 }
 impl ShmrFsConfig {
-
     pub fn has_pool(&self, pool: &str) -> bool {
         self.pools.contains_key(pool)
     }
@@ -132,6 +131,13 @@ impl Bucket {
         self.path.clone()
     }
 }
+impl Deref for Bucket {
+    type Target = PathBuf;
+
+    fn deref(&self) -> &Self::Target {
+        &self.path
+    }
+}
 
 #[derive(Debug)]
 pub enum ShmrError {
@@ -145,7 +151,7 @@ pub enum ShmrError {
     ShardMissing,
     InvalidInodeType(String),
     InodeNotExist,
-    BlockIndexOutOfBounds
+    BlockIndexOutOfBounds,
 }
 impl From<Error> for ShmrError {
     fn from(value: Error) -> Self {

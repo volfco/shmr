@@ -3,6 +3,7 @@ use log::trace;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 use std::fs::OpenOptions;
+use std::ops::Deref;
 use std::path::PathBuf;
 
 #[allow(clippy::identity_op)]
@@ -26,15 +27,15 @@ impl VirtualPath {
         trace!("resolving {:?}", &self);
         let pool_map = map.pools.get(&self.pool).ok_or(ShmrError::InvalidPoolId)?;
 
-        let mut path_buf = pool_map
+        let path_buf = pool_map
             .get(&self.bucket)
             .ok_or(ShmrError::InvalidBucketId)?
-            .path();
+            .deref();
 
-        path_buf.push(&self.filename[0..2]); // first two characters of the filename
-        path_buf.push(&self.filename[2..4]); // next two characters of the filename
+        let mut base_dir = path_buf.join(&self.filename[0..2]); // first two characters of the filename
+        base_dir.push(&self.filename[2..4]); // next two characters of the filename
 
-        let result = (path_buf.join(&self.filename), path_buf);
+        let result = (path_buf.join(&self.filename), base_dir);
         trace!(
             "Resolved path.rs for {:?} to (file: {:?}, dir: {:?})",
             self,

@@ -90,7 +90,10 @@ impl StorageBackend for FilePerKey {
                     continue;
                 }
 
-                entries.push((name.replace(".yaml", "").as_bytes().to_vec(), self.read_file(path)?))
+                entries.push((
+                    name.replace(".yaml", "").as_bytes().to_vec(),
+                    self.read_file(path)?,
+                ))
             } else {
                 error!("skipping {:?}. there's no filename??", &path);
             }
@@ -146,17 +149,25 @@ impl<
         V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
     > DataBunny<K, V>
 {
-    pub fn open(path: &Path) -> Result<Self, BunnyError> where <K as FromStr>::Err: Debug {
+    pub fn open(path: &Path) -> Result<Self, BunnyError>
+    where
+        <K as FromStr>::Err: Debug,
+    {
         let sb = FilePerKey {
             compression: false,
             base_dir: path.to_path_buf(),
         };
 
-        let mut entries_tree: BTreeMap<K, Arc<RwLock<V>>>  = BTreeMap::new();
+        let mut entries_tree: BTreeMap<K, Arc<RwLock<V>>> = BTreeMap::new();
         for record in sb.load_all()? {
             let s = String::from_utf8(record.0).unwrap();
             let k: K = K::from_str(&s).unwrap();
-            entries_tree.insert(k, Arc::new(RwLock::new(serde_yaml::from_slice(record.1.as_slice()).unwrap())));
+            entries_tree.insert(
+                k,
+                Arc::new(RwLock::new(
+                    serde_yaml::from_slice(record.1.as_slice()).unwrap(),
+                )),
+            );
         }
 
         let mut s = Self {
@@ -173,7 +184,6 @@ impl<
 
         Ok(s)
     }
-
 
     /// Return a copy of the last key in the BTree
     pub fn last_key(&self) -> K {
@@ -196,17 +206,11 @@ impl<
 
     /// Return a read-only copy of the Record
     pub fn get(&self, key: &K) -> Result<Option<ArcRwLockReadGuard<RawRwLock, V>>, BunnyError> {
-        // TODO Improve logging messages & format
-        let k_str = key.to_string();
-        trace!("attempting to get record matching key '{:?}", &k_str);
-
         let entry_handle = self.entries.read();
         if let Some(entry) = entry_handle.get(key) {
             return Ok(Some(entry.read_arc()));
         }
         drop(entry_handle);
-
-        debug!("'{}' not loaded in memory. attempting to load from disk", &k_str);
 
         let key_name = key.to_string();
         if let Some(record) = self.storage_backend.load(key_name.as_bytes())? {
@@ -214,7 +218,6 @@ impl<
 
             self.get(key)
         } else {
-            warn!("'{}' does not exist on disk", &k_str);
             Ok(None)
         }
     }
@@ -224,8 +227,6 @@ impl<
         &self,
         key: &K,
     ) -> Result<Option<ArcRwLockWriteGuard<RawRwLock, V>>, BunnyError> {
-        let k_str = key.to_string();
-        trace!("attempting to get mutable record matching key '{:?}", &k_str);
         let entry_handle = self.entries.read();
 
         if let Some(entry) = entry_handle.get(key) {

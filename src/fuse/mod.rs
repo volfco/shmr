@@ -524,7 +524,12 @@ impl Filesystem for ShmrFs {
             let mut parent = self.superblock.get_mut(&parent).unwrap().unwrap();
             if let InodeDescriptor::Directory(contents) = &mut parent.inode_descriptor {
                 if !contents.contains_key(&name.as_bytes().to_vec()) {
-                    info!("FUSE({}) Inode {:?} does not have an entry for '{:?}'", req.unique(), &parent, &name);
+                    info!(
+                        "FUSE({}) Inode {:?} does not have an entry for '{:?}'",
+                        req.unique(),
+                        &parent,
+                        &name
+                    );
                     reply.error(libc::ENOENT);
                     return;
                 }
@@ -537,14 +542,24 @@ impl Filesystem for ShmrFs {
 
             if let InodeDescriptor::Directory(contents) = &old_parent.inode_descriptor {
                 if !contents.contains_key(&name.as_bytes().to_vec()) {
-                    info!("FUSE({}) Inode {} does not have an entry for '{:?}'", req.unique(), &parent, &name);
+                    info!(
+                        "FUSE({}) Inode {} does not have an entry for '{:?}'",
+                        req.unique(),
+                        &parent,
+                        &name
+                    );
                     reply.error(libc::ENOENT);
                     return;
                 }
             }
             if let InodeDescriptor::Directory(contents) = &new_parent.inode_descriptor {
                 if !contents.contains_key(&newname.as_bytes().to_vec()) {
-                    info!("FUSE({}) Inode {:?} does not have an entry for '{:?}'", req.unique(), &newparent, &newname);
+                    info!(
+                        "FUSE({}) Inode {:?} does not have an entry for '{:?}'",
+                        req.unique(),
+                        &newparent,
+                        &newname
+                    );
                     reply.error(libc::ENOENT);
                     return;
                 }
@@ -561,7 +576,6 @@ impl Filesystem for ShmrFs {
                 }
             }
         }
-
 
         reply.ok();
     }
@@ -602,7 +616,6 @@ impl Filesystem for ShmrFs {
 
         reply.opened(fh, 0);
     }
-
 
     fn read(
         &mut self,
@@ -728,7 +741,11 @@ impl Filesystem for ShmrFs {
             let mut inode_entry = inode_entry.unwrap();
             if let InodeDescriptor::File(vf) = &mut inode_entry.inode_descriptor {
                 if let Err(e) = vf.sync_data(true) {
-                    error!("FUSE({}) Error during Flush Operation. {:?}", req.unique(), e);
+                    error!(
+                        "FUSE({}) Error during Flush Operation. {:?}",
+                        req.unique(),
+                        e
+                    );
                     reply.error(libc::EIO);
                     return;
                 }
@@ -738,7 +755,11 @@ impl Filesystem for ShmrFs {
         info!("mark");
 
         if let Err(e) = self.superblock.flush(&ino) {
-            error!("FUSE({}) Error during Flush Operation. {:?}", req.unique(), e);
+            error!(
+                "FUSE({}) Error during Flush Operation. {:?}",
+                req.unique(),
+                e
+            );
             reply.error(libc::EIO);
             return;
         }
