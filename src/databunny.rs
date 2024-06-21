@@ -1,5 +1,5 @@
 use crate::tasks::{WorkerTask, WorkerThread};
-use log::{debug, error, info};
+use log::{debug, error, info, trace, warn};
 use parking_lot::{ArcRwLockReadGuard, ArcRwLockWriteGuard, RawRwLock, RwLock};
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::BTreeMap;
@@ -29,10 +29,13 @@ pub trait StorageBackend: Debug + Send + Sync {
 
 #[derive(Clone, Debug)]
 pub struct FilePerKey {
+    /// Should files be written compressed
+    pub compression: bool,
     pub base_dir: PathBuf,
 }
 impl FilePerKey {
     fn get_path(&self, key: &[u8]) -> PathBuf {
+        // TODO implement Brotli compressions
         self.base_dir
             .join(format!("{}.yaml", String::from_utf8(key.to_vec()).unwrap()))
     }
@@ -145,6 +148,7 @@ impl<
 {
     pub fn open(path: &Path) -> Result<Self, BunnyError> where <K as FromStr>::Err: Debug {
         let sb = FilePerKey {
+            compression: false,
             base_dir: path.to_path_buf(),
         };
 
@@ -192,11 +196,17 @@ impl<
 
     /// Return a read-only copy of the Record
     pub fn get(&self, key: &K) -> Result<Option<ArcRwLockReadGuard<RawRwLock, V>>, BunnyError> {
+        // TODO Improve logging messages & format
+        let k_str = key.to_string();
+        trace!("attempting to get record matching key '{:?}", &k_str);
+
         let entry_handle = self.entries.read();
         if let Some(entry) = entry_handle.get(key) {
             return Ok(Some(entry.read_arc()));
         }
         drop(entry_handle);
+
+        debug!("'{}' not loaded in memory. attempting to load from disk", &k_str);
 
         let key_name = key.to_string();
         if let Some(record) = self.storage_backend.load(key_name.as_bytes())? {
@@ -204,6 +214,7 @@ impl<
 
             self.get(key)
         } else {
+            warn!("'{}' does not exist on disk", &k_str);
             Ok(None)
         }
     }
@@ -213,11 +224,16 @@ impl<
         &self,
         key: &K,
     ) -> Result<Option<ArcRwLockWriteGuard<RawRwLock, V>>, BunnyError> {
+        let k_str = key.to_string();
+        trace!("attempting to get mutable record matching key '{:?}", &k_str);
         let entry_handle = self.entries.read();
 
         if let Some(entry) = entry_handle.get(key) {
+            let write_arc = entry.write_arc();
+            drop(entry_handle);
+
             self.mark_dirty(key);
-            return Ok(Some(entry.write_arc()));
+            return Ok(Some(write_arc));
         }
         drop(entry_handle);
 
@@ -244,6 +260,7 @@ impl<
         }
         self.mark_dirty(&key);
         let _ = handle.insert(key, Arc::new(RwLock::new(value)));
+        drop(handle);
         Ok(())
     }
 

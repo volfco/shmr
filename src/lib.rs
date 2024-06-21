@@ -23,7 +23,7 @@ pub const VFS_DEFAULT_BLOCK_SIZE: u64 = 4096;
 
 #[derive(Clone, Debug)]
 pub struct ShmrFs {
-    config: ShmrFsConfig,
+    pub config: ShmrFsConfig,
 
     superblock: DataBunny<u64, SuperblockEntry>,
 
@@ -39,12 +39,19 @@ impl ShmrFs {
             .set(102400, 409600)
             .expect("unable to set NOFILE limits");
 
-        Ok(Self {
+        let shmr = Self {
             superblock: DataBunny::open(&config.metadata_dir).unwrap(),
             config,
             // file_cache_strategy: Arc::new(Mutex::new(FileCacheStrategy::Read)),
             file_handles: Arc::new(Default::default()),
-        })
+        };
+
+        let dbus_shmr = shmr.clone();
+        std::thread::spawn(move || {
+            dbus::dbus_server(dbus_shmr)
+        });
+
+        Ok(shmr)
     }
 
     /// Generate Inode Number
@@ -65,7 +72,7 @@ impl ShmrFs {
     }
 
     /// Release the File Handle, and maybe fully flush and close the Inode
-    fn release_fh(&self, fh: u64) -> Result<(), ShmrError> {
+    fn release_fh(&self, _fh: u64) -> Result<(), ShmrError> {
         Ok(())
     }
 
@@ -108,7 +115,6 @@ pub mod tests {
             mount_dir: Default::default(),
             pools,
             write_pool: "test_pool".to_string(),
-            sqlite_options: Default::default(),
         }
     }
 }

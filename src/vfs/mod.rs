@@ -5,9 +5,9 @@ use crate::iostat::IOTracker;
 use crate::vfs::block::{BlockTopology, VirtualBlock};
 use crate::vfs::path::VIRTUAL_BLOCK_DEFAULT_SIZE;
 use crate::{ShmrError, VFS_DEFAULT_BLOCK_SIZE};
-use log::{debug, trace};
+use log::{debug, trace, warn};
 use serde::{Deserialize, Serialize};
-use std::cmp;
+use std::{cmp, mem};
 use std::time::Instant;
 
 fn calculate_shard_size(length: u64, data_shards: u8) -> usize {
@@ -214,6 +214,31 @@ impl VirtualFile {
         self.io_stat.inc_write();
         Ok(written)
     }
+
+    pub fn replace_block(&mut self, block_idx: usize, new_block: VirtualBlock) -> Result<(), ShmrError> {
+        if block_idx >= self.blocks.len() {
+            warn!("Requested Block Index is greater than total blocks");
+            return Err(ShmrError::BlockIndexOutOfBounds)
+        }
+        let old_block = self.blocks.get_mut(block_idx).unwrap();
+
+        // TODO Maybe we can improve performance by taking the old block's buffer and moving it to the new one. Would require the buffer to be up to date
+        let mut block_buffer = vec![0u8; old_block.size as usize];
+
+        debug!("reading contents of block {} into buffer", block_idx);
+        old_block.read(0, &mut block_buffer)?;
+
+        debug!("writing contents of buffer to new block");
+        new_block.write(0, &block_buffer)?;
+        new_block.sync_data(true)?;
+
+        // replace the old and new blocks in the File
+        let _old_block = mem::replace(old_block, new_block);
+
+        // TODO flag the old block for deletion
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -253,7 +278,6 @@ mod tests {
                 mount_dir: Default::default(),
                 pools,
                 write_pool: "test_pool".to_string(),
-                sqlite_options: Default::default(),
             }),
             io_stat: IOTracker::default(),
         }

@@ -30,6 +30,7 @@ fn main() {
         .format_timestamp_nanos()
         .filter(Some("shmr"), log_level)
         .filter(Some("fuser"), log_level)
+        .filter(Some("dbus"), log_level)
         // .filter_level(log_level)
         .init();
 

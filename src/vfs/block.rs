@@ -38,41 +38,49 @@ impl From<BlockTopology> for String {
         match value {
             BlockTopology::Single => "Single".to_string(),
             BlockTopology::Mirror(n) => format!("Mirror({})", n),
-            BlockTopology::Erasure(_, d, p) => format!("Erasure({},{})", d, p),
+            BlockTopology::Erasure(v, d, p) => format!("Erasure({}, {}, {})", v, d, p),
         }
     }
 }
 
 impl TryFrom<String> for BlockTopology {
-    type Error = ();
+    type Error = String;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
         let parts: Vec<&str> = value.splitn(2, '(').collect();
-        let (name, arg) = (parts[0], parts.get(1).unwrap_or(&""));
+
+        if parts.len() != 2 {
+            return Err(format!("'{}' does not have '('", value));
+        }
+
+        let (name, mut arg) = (parts[0], parts[1].to_string());
+        arg.pop();
         match name {
             "Single" => Ok(BlockTopology::Single),
             "Mirror" => {
-                let n: u8 = arg.trim_end_matches(')').parse().map_err(|_| ())?;
+                let n: u8 = arg.trim_end_matches(')').parse().map_err(|_| format!("Unable to parse {}. {} - {}", value, name, arg))?;
                 Ok(BlockTopology::Mirror(n))
             }
             "Erasure" => {
                 let params: Vec<&str> = arg.splitn(3, ',').collect();
-                let v: u8 = params[0].trim().parse().map_err(|_| ())?;
+                eprintln!("params: {:?}", &params);
+                let v: u8 = params[0].trim().parse().map_err(|_| format!("Unable to parse version {:?}", params))?;
                 let ds: u8 = params
                     .get(1)
                     .unwrap_or(&"")
+                    .to_string()
                     .trim()
                     .parse()
-                    .map_err(|_| ())?;
+                    .map_err(|_| format!("Unable to parse data shards {:?}", params))?;
                 let ps: u8 = params
                     .get(2)
                     .unwrap_or(&"")
-                    .trim_end_matches(')')
+                    .trim().trim_end_matches(')')
                     .parse()
-                    .map_err(|_| ())?;
+                    .map_err(|_| format!("Unable to parse parity shards {:?}", params))?;
                 Ok(BlockTopology::Erasure(v, ds, ps))
             }
-            _ => Err(()),
+            _ => Err(format!("Unable to parse {}. {} - {}", value, name, arg)),
         }
     }
 }
@@ -173,7 +181,18 @@ impl VirtualBlock {
         size: u64,
         topology: BlockTopology,
     ) -> Result<Self, ShmrError> {
-        debug!("[{}:{:#016x}] creating new VirtualBlock", ino, idx);
+        VirtualBlock::create_with_pool(ino, idx, config, size, topology, &config.write_pool)
+    }
+
+    pub fn create_with_pool(
+        ino: u64,
+        idx: u64,
+        config: &ShmrFsConfig,
+        size: u64,
+        topology: BlockTopology,
+        pool: &str
+    ) -> Result<Self, ShmrError> {
+        debug!("[{}:{:#016x}] creating new VirtualBlock of size {} in pool '{}'", ino, idx, size, pool);
 
         let (needed_shards, ident) = match &topology {
             BlockTopology::Single => (1, "single".to_string()),
@@ -181,12 +200,12 @@ impl VirtualBlock {
             BlockTopology::Erasure(_, d, p) => ((d + p) as usize, format!("ec{}{}", d, p)),
         };
 
-        let mut buckets = config.select_buckets(&config.write_pool, needed_shards)?;
+        let buckets = config.select_buckets(pool, needed_shards)?;
         let mut shards = vec![];
-        for i in 0..needed_shards {
+        for (i, bucket) in buckets.into_iter().enumerate() {
             let vpf = VirtualPath {
-                pool: config.write_pool.clone(),
-                bucket: buckets.pop().unwrap(),
+                pool: pool.to_string(),
+                bucket,
                 // need to add some randomness
                 filename: format!("{}:{}_{}_{}.{}", ino, idx, ident, i, VP_DEFAULT_FILE_EXT),
             };
@@ -550,6 +569,20 @@ mod tests {
     use std::io::Read;
     use std::os::unix::prelude::MetadataExt;
     use std::sync::atomic::Ordering;
+
+    #[test]
+    fn test_block_topology_try_from() {
+        let topology = BlockTopology::try_from("Erasure(1, 3, 2)".to_string());
+        assert!(topology.is_ok(), "{:?}", topology);
+        match topology.unwrap() {
+            BlockTopology::Erasure(v, d, p) => {
+                assert_eq!(v, 1);
+                assert_eq!(d, 3);
+                assert_eq!(p, 2);
+            }
+            _ => panic!("Expected an Erasure topology"),
+        }
+    }
 
     #[test]
     fn test_virtual_block_new_block() {

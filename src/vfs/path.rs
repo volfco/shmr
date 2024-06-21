@@ -23,6 +23,7 @@ impl VirtualPath {
     /// Return the (Filename, Directory) for the file.
     /// It's inverted to avoid needing to create a copy of the directory name before joining the filename
     pub fn resolve(&self, map: &ShmrFsConfig) -> Result<(PathBuf, PathBuf), ShmrError> {
+        trace!("resolving {:?}", &self);
         let pool_map = map.pools.get(&self.pool).ok_or(ShmrError::InvalidPoolId)?;
 
         let mut path_buf = pool_map

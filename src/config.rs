@@ -8,9 +8,17 @@ use std::path::PathBuf;
 use sysinfo::Disks;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MetadataFormat {
+    Yaml,
+    BrotliYaml
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShmrFsConfig {
     /// Metadata Directory location. Where the sqlite databases are stored
     pub metadata_dir: PathBuf,
+
+    // pub metdata_format: MetadataFormat,
 
     /// Directory where the FUSE Filesystem will be mounted
     pub mount_dir: PathBuf,
@@ -20,10 +28,13 @@ pub struct ShmrFsConfig {
 
     /// Write Pool
     pub write_pool: String,
-
-    pub sqlite_options: HashMap<String, String>,
 }
 impl ShmrFsConfig {
+
+    pub fn has_pool(&self, pool: &str) -> bool {
+        self.pools.contains_key(pool)
+    }
+
     /// Select n Buckets from the given pool
     pub fn select_buckets(&self, pool: &str, count: usize) -> Result<Vec<String>, ShmrError> {
         // TODO This function is ugly and could be refactored
@@ -132,10 +143,9 @@ pub enum ShmrError {
     EcError(reed_solomon_erasure::Error),
     ShardOpened,
     ShardMissing,
-    DatabaseError(rusqlite::Error),
-    DatabasePoolError(r2d2::Error),
     InvalidInodeType(String),
     InodeNotExist,
+    BlockIndexOutOfBounds
 }
 impl From<Error> for ShmrError {
     fn from(value: Error) -> Self {
@@ -145,16 +155,6 @@ impl From<Error> for ShmrError {
 impl From<reed_solomon_erasure::Error> for ShmrError {
     fn from(value: reed_solomon_erasure::Error) -> Self {
         Self::EcError(value)
-    }
-}
-impl From<rusqlite::Error> for ShmrError {
-    fn from(value: rusqlite::Error) -> Self {
-        ShmrError::DatabaseError(value)
-    }
-}
-impl From<r2d2::Error> for ShmrError {
-    fn from(value: r2d2::Error) -> Self {
-        ShmrError::DatabasePoolError(value)
     }
 }
 

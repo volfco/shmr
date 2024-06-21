@@ -1,5 +1,6 @@
 mount_dir: ./mnt
 metadata_dir: ./metadata
+metadata_format: yaml
 
 write_pool: pool0
 

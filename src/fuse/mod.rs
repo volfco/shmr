@@ -566,7 +566,6 @@ impl Filesystem for ShmrFs {
         reply.ok();
     }
 
-
     fn open(&mut self, req: &Request<'_>, ino: u64, flags: i32, reply: ReplyOpen) {
         trace!(
             "FUSE({}) 'open' invoked on inode {} with flag {}",
@@ -603,6 +602,7 @@ impl Filesystem for ShmrFs {
 
         reply.opened(fh, 0);
     }
+
 
     fn read(
         &mut self,
@@ -707,6 +707,50 @@ impl Filesystem for ShmrFs {
         } else {
             panic!("attempted to write to non-file inode")
         }
+    }
+
+    fn flush(&mut self, req: &Request<'_>, ino: u64, fh: u64, lock_owner: u64, reply: ReplyEmpty) {
+        trace!(
+            "FUSE({}) 'flush' invoked on inode {} for fh {}",
+            req.unique(),
+            ino,
+            fh
+        );
+
+        {
+            let inode_entry = self.superblock.get_mut(&ino).unwrap();
+            if inode_entry.is_none() {
+                warn!("FUSE({}) Unable to perform read operation. Inode does not exist or has not been opened", req.unique());
+                reply.error(libc::ENOENT);
+                return;
+            }
+
+            let mut inode_entry = inode_entry.unwrap();
+            if let InodeDescriptor::File(vf) = &mut inode_entry.inode_descriptor {
+                if let Err(e) = vf.sync_data(true) {
+                    error!("FUSE({}) Error during Flush Operation. {:?}", req.unique(), e);
+                    reply.error(libc::EIO);
+                    return;
+                }
+            }
+        }
+
+        info!("mark");
+
+        if let Err(e) = self.superblock.flush(&ino) {
+            error!("FUSE({}) Error during Flush Operation. {:?}", req.unique(), e);
+            reply.error(libc::EIO);
+            return;
+        }
+
+        info!(
+            "FUSE({}) 'flush' on inode {} for fh {} was successful",
+            req.unique(),
+            ino,
+            fh
+        );
+
+        reply.ok();
     }
 
     fn release(
