@@ -27,7 +27,7 @@ sysinfo = "0.30"
 rlimit = "0.10"
 dashmap = "5.5"
 bytesize = { version = "1.3", features = ["serde"]}
-
+zstd = "0.13"
 parking_lot = { version = "0.12.3", features = ["hardware-lock-elision", "arc_lock"]}
 base64 = "0.22.1"
 

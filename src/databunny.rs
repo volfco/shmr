@@ -1,19 +1,20 @@
 use crate::tasks::{WorkerTask, WorkerThread};
-use log::{debug, error, info, trace, warn};
+use log::{debug, error, info, trace};
 use parking_lot::{ArcRwLockReadGuard, ArcRwLockWriteGuard, RawRwLock, RwLock};
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::fmt::Debug;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Instant;
+
+pub const ZSTD_COMPRESSION_DEFAULT: i32 = 5;
 
 pub trait StorageBackend: Debug + Send + Sync {
-    /// Open the StorageBackend
-    fn open(&self) -> Result<(), BunnyError>;
-
     /// Load the given key from disk
     fn load(&self, key: &[u8]) -> Result<Option<Vec<u8>>, BunnyError>;
 
@@ -24,34 +25,72 @@ pub trait StorageBackend: Debug + Send + Sync {
 
     /// Write the given key,value pair to disk.
     /// This assumes that the data is fully persisted upon return
-    fn save(&self, key: &[u8], val: &[u8]) -> Result<(), BunnyError>;
+    fn save(&self, key: Vec<u8>, val: Vec<u8>) -> Result<(), BunnyError>;
+
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub enum CompressionMethod {
+    None,
+    Zstd(i32)
+}
+impl CompressionMethod {
+    fn extension(&self) -> &'static str {
+        match self {
+            CompressionMethod::None => ".yaml",
+            CompressionMethod::Zstd(_) => ".yaml.zstd",
+        }
+    }
+}
+impl TryFrom<&String> for CompressionMethod {
+    type Error = ();
+
+    fn try_from(value: &String) -> Result<Self, Self::Error> {
+        if value.ends_with(CompressionMethod::None.extension()) {
+            Ok(CompressionMethod::None)
+        } else if value.ends_with(CompressionMethod::Zstd(ZSTD_COMPRESSION_DEFAULT).extension()) {
+            Ok(CompressionMethod::Zstd(ZSTD_COMPRESSION_DEFAULT))
+        } else {
+            Err(())
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct FilePerKey {
-    /// Should files be written compressed
-    pub compression: bool,
+    pub compression: CompressionMethod,
     pub base_dir: PathBuf,
 }
 impl FilePerKey {
     fn get_path(&self, key: &[u8]) -> PathBuf {
-        // TODO implement Brotli compressions
         self.base_dir
-            .join(format!("{}.yaml", String::from_utf8(key.to_vec()).unwrap()))
+            .join(format!("{}{}", String::from_utf8(key.to_vec()).unwrap(), self.compression.extension()))
     }
 
-    fn read_file(&self, path: PathBuf) -> Result<Vec<u8>, BunnyError> {
+    fn read_file(&self, path: PathBuf, compression_method: &CompressionMethod) -> Result<Vec<u8>, BunnyError> {
         let mut buf = vec![];
-        let _amt = OpenOptions::new()
+        let amt = OpenOptions::new()
             .read(true)
-            .open(path)?
-            .read_to_end(&mut buf);
+            .open(&path)?
+            .read_to_end(&mut buf)?;
+
+        let buf = match compression_method {
+            CompressionMethod::None => buf,
+            CompressionMethod::Zstd(_) => {
+                let start = Instant::now();
+                let v = zstd::stream::decode_all(&*buf)?;
+                trace!("took {:?} to decompress entry", start.elapsed());
+                v
+            }
+        };
+
+        debug!("read {} bytes from {:?}", amt, path);
 
         Ok(buf)
     }
 
     fn write_file(&self, path: PathBuf, contents: &[u8]) -> Result<(), BunnyError> {
-        info!("writing to {:?}", &path);
         OpenOptions::new()
             .create(true)
             .write(true)
@@ -63,10 +102,6 @@ impl FilePerKey {
     }
 }
 impl StorageBackend for FilePerKey {
-    fn open(&self) -> Result<(), BunnyError> {
-        todo!()
-    }
-
     fn load(&self, key: &[u8]) -> Result<Option<Vec<u8>>, BunnyError> {
         let path = self.get_path(key);
 
@@ -74,7 +109,8 @@ impl StorageBackend for FilePerKey {
             return Ok(None);
         }
 
-        Ok(Some(self.read_file(path)?))
+        // TODO Add better logic to search for the correct file. This will fail if the compression method changed
+        Ok(Some(self.read_file(path, &self.compression)?))
     }
 
     fn load_all(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>, BunnyError> {
@@ -85,14 +121,23 @@ impl StorageBackend for FilePerKey {
             if let Some(ext) = path.file_name() {
                 let name = ext.to_str().unwrap().to_string();
 
-                if !name.contains(".yaml") {
+                if !name.contains(".yaml") {  // there might be compression extensions
                     debug!("skipping {:?}. invalid extension", &path);
                     continue;
                 }
 
+                let compression_method = CompressionMethod::try_from(&name);
+                let compression_method = match compression_method {
+                    Ok(method) => method,
+                    Err(err) => {
+                        debug!("skipping {:?}. invalid compression method: {:?}", &path, err);
+                        continue;
+                    }
+                };
+
                 entries.push((
-                    name.replace(".yaml", "").as_bytes().to_vec(),
-                    self.read_file(path)?,
+                    name.replace(compression_method.extension(), "").as_bytes().to_vec(),
+                    self.read_file(path, &compression_method)?,
                 ))
             } else {
                 error!("skipping {:?}. there's no filename??", &path);
@@ -108,12 +153,21 @@ impl StorageBackend for FilePerKey {
         self.get_path(key).exists()
     }
 
-    fn save(&self, key: &[u8], val: &[u8]) -> Result<(), BunnyError> {
-        self.write_file(self.get_path(key), val)
+    fn save(&self, key: Vec<u8>, val: Vec<u8>) -> Result<(), BunnyError> {
+        let contents = match self.compression {
+            CompressionMethod::None => val,
+            CompressionMethod::Zstd(level) => {
+                let start = Instant::now();
+                let v = zstd::bulk::compress(&val, level)?;
+                trace!("took {:?} to compress entry", start.elapsed());
+                v
+            }
+        };
+        self.write_file(self.get_path(&key), &contents)
     }
 }
-const FLUSH_INTERVAL: u64 = 500; // in ms
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum BunnyError {
     EntryExists,
@@ -149,18 +203,19 @@ impl<
         V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
     > DataBunny<K, V>
 {
-    pub fn open(path: &Path) -> Result<Self, BunnyError>
+    pub fn open(path: &Path, compression: CompressionMethod) -> Result<Self, BunnyError>
     where
         <K as FromStr>::Err: Debug,
     {
         let sb = FilePerKey {
-            compression: false,
+            compression,
             base_dir: path.to_path_buf(),
         };
 
         let mut entries_tree: BTreeMap<K, Arc<RwLock<V>>> = BTreeMap::new();
         for record in sb.load_all()? {
             let s = String::from_utf8(record.0).unwrap();
+            eprintln!("string: {}", s);
             let k: K = K::from_str(&s).unwrap();
             entries_tree.insert(
                 k,
@@ -198,10 +253,6 @@ impl<
 
     fn decode_entry(&self, buf: Vec<u8>) -> Result<V, BunnyError> {
         Ok(serde_yaml::from_slice(&buf)?)
-    }
-
-    fn encode_entry(&self, entry: &V) -> Result<Vec<u8>, BunnyError> {
-        Ok(serde_yaml::to_string(entry)?.as_bytes().to_vec())
     }
 
     /// Return a read-only copy of the Record
@@ -270,7 +321,7 @@ impl<
         if let Some(inner) = self.get(ident)? {
             let key = ident.to_string();
             let val = serde_yaml::to_string(&*inner)?.as_bytes().to_vec();
-            self.storage_backend.save(key.as_bytes(), &val)?;
+            self.storage_backend.save(key.as_bytes().to_vec(), val)?;
         }
         Ok(())
     }

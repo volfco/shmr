@@ -1,7 +1,7 @@
 extern crate core;
 
 use crate::config::{ShmrError, ShmrFsConfig};
-use crate::databunny::DataBunny;
+use crate::databunny::{CompressionMethod, DataBunny};
 // use crate::tasks::flush::FlushMaster;
 // use crate::tasks::WorkerThread;
 use crate::types::SuperblockEntry;
@@ -40,7 +40,7 @@ impl ShmrFs {
             .expect("unable to set NOFILE limits");
 
         let shmr = Self {
-            superblock: DataBunny::open(&config.metadata_dir).unwrap(),
+            superblock: DataBunny::open(&config.metadata_dir, CompressionMethod::Zstd(20)).unwrap(),
             config,
             // file_cache_strategy: Arc::new(Mutex::new(FileCacheStrategy::Read)),
             file_handles: Arc::new(Default::default()),
