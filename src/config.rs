@@ -28,6 +28,8 @@ pub struct ShmrFsConfig {
 
     /// Write Pool
     pub write_pool: String,
+
+    pub block_size: ByteSize,
 }
 impl ShmrFsConfig {
     pub fn has_pool(&self, pool: &str) -> bool {

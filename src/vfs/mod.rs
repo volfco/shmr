@@ -70,10 +70,10 @@ impl VirtualFile {
         }
     }
 
-    pub fn new_with(ino: u64) -> Self {
+    pub fn new_with(ino: u64, size: u64) -> Self {
         let mut vf = VirtualFile::new();
         vf.ino = ino;
-
+        vf.size = size;
         vf
     }
 

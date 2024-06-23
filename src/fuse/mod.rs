@@ -17,13 +17,13 @@ use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::os::unix::prelude::OsStrExt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-// libc::ENOMSG
 
 #[cfg(target_os = "macos")]
 pub type Mode = u16;
 
 #[cfg(not(target_os = "macos"))]
 pub type Mode = u32;
+
 impl ShmrFs {
     fn is_file(&self, ino: u64) -> bool {
         let binding = self.superblock.get(&ino).unwrap();
@@ -34,6 +34,7 @@ impl ShmrFs {
         }
     }
 
+    #[allow(dead_code)]
     fn is_dir(&self, ino: u64) -> bool {
         let binding = self.superblock.get(&ino).unwrap();
         if binding.is_none() {
@@ -46,6 +47,7 @@ impl ShmrFs {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn create_entry(
         &self,
         req: &Request<'_>,
@@ -134,7 +136,10 @@ impl ShmrFs {
                 xattrs: BTreeMap::new(),
             };
             let child_descriptor = match file_type {
-                libc::S_IFREG => InodeDescriptor::File(Box::new(VirtualFile::new_with(ino))),
+                libc::S_IFREG => InodeDescriptor::File(Box::new(VirtualFile::new_with(
+                    ino,
+                    self.config.block_size.as_u64(), // pull the filesize from the config object
+                ))),
                 // libc::S_IFLNK => InodeDescriptor::Symlink,
                 libc::S_IFDIR => InodeDescriptor::Directory(BTreeMap::new()),
                 _ => unimplemented!(),
@@ -722,7 +727,7 @@ impl Filesystem for ShmrFs {
         }
     }
 
-    fn flush(&mut self, req: &Request<'_>, ino: u64, fh: u64, lock_owner: u64, reply: ReplyEmpty) {
+    fn flush(&mut self, req: &Request<'_>, ino: u64, fh: u64, _lock_owner: u64, reply: ReplyEmpty) {
         trace!(
             "FUSE({}) 'flush' invoked on inode {} for fh {}",
             req.unique(),

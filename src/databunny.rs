@@ -3,7 +3,6 @@ use log::{debug, error, info, trace};
 use parking_lot::{ArcRwLockReadGuard, ArcRwLockWriteGuard, RawRwLock, RwLock};
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::BTreeMap;
-use std::ffi::OsStr;
 use std::fmt::Debug;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
@@ -26,14 +25,13 @@ pub trait StorageBackend: Debug + Send + Sync {
     /// Write the given key,value pair to disk.
     /// This assumes that the data is fully persisted upon return
     fn save(&self, key: Vec<u8>, val: Vec<u8>) -> Result<(), BunnyError>;
-
 }
 
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub enum CompressionMethod {
     None,
-    Zstd(i32)
+    Zstd(i32),
 }
 impl CompressionMethod {
     fn extension(&self) -> &'static str {
@@ -64,11 +62,18 @@ pub struct FilePerKey {
 }
 impl FilePerKey {
     fn get_path(&self, key: &[u8]) -> PathBuf {
-        self.base_dir
-            .join(format!("{}{}", String::from_utf8(key.to_vec()).unwrap(), self.compression.extension()))
+        self.base_dir.join(format!(
+            "{}{}",
+            String::from_utf8(key.to_vec()).unwrap(),
+            self.compression.extension()
+        ))
     }
 
-    fn read_file(&self, path: PathBuf, compression_method: &CompressionMethod) -> Result<Vec<u8>, BunnyError> {
+    fn read_file(
+        &self,
+        path: PathBuf,
+        compression_method: &CompressionMethod,
+    ) -> Result<Vec<u8>, BunnyError> {
         let mut buf = vec![];
         let amt = OpenOptions::new()
             .read(true)
@@ -121,7 +126,8 @@ impl StorageBackend for FilePerKey {
             if let Some(ext) = path.file_name() {
                 let name = ext.to_str().unwrap().to_string();
 
-                if !name.contains(".yaml") {  // there might be compression extensions
+                if !name.contains(".yaml") {
+                    // there might be compression extensions
                     debug!("skipping {:?}. invalid extension", &path);
                     continue;
                 }
@@ -130,13 +136,18 @@ impl StorageBackend for FilePerKey {
                 let compression_method = match compression_method {
                     Ok(method) => method,
                     Err(err) => {
-                        debug!("skipping {:?}. invalid compression method: {:?}", &path, err);
+                        debug!(
+                            "skipping {:?}. invalid compression method: {:?}",
+                            &path, err
+                        );
                         continue;
                     }
                 };
 
                 entries.push((
-                    name.replace(compression_method.extension(), "").as_bytes().to_vec(),
+                    name.replace(compression_method.extension(), "")
+                        .as_bytes()
+                        .to_vec(),
                     self.read_file(path, &compression_method)?,
                 ))
             } else {
