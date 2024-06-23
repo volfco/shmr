@@ -1,11 +1,16 @@
 use crate::config::{ShmrError, ShmrFsConfig};
+use crate::iostat::{
+    measure, METRIC_DISK_IO_OPERATION, METRIC_DISK_IO_OPERATION_DURATION,
+    METRIC_ERASURE_ENCODING_DURATION,
+};
 use crate::vfs::calculate_shard_size;
 use crate::vfs::path::{VirtualPath, VP_DEFAULT_FILE_EXT};
 use log::{debug, trace, warn};
+use metrics::{counter, histogram};
 use reed_solomon_erasure::galois_8::ReedSolomon;
 use serde::{Deserialize, Serialize};
 use std::default::Default;
-use std::fmt;
+use std::{fmt, io};
 use std::fs::{File, OpenOptions};
 use std::io::Read;
 use std::os::unix::prelude::FileExt;
@@ -358,20 +363,12 @@ impl VirtualBlock {
         let shard_file_handles = self.shard_handles.lock().unwrap();
         match self.topology {
             BlockTopology::Single => {
-                let shard = &shard_file_handles[0].1;
-
-                shard.write_all_at(buffer.as_slice(), 0)?;
-                shard.sync_all()?;
+                write_path(&shard_file_handles[0], buffer.as_slice())?;
             }
             BlockTopology::Mirror(n) => {
                 // TODO do these in parallel
-                for i in 0..n {
-                    let _ = &shard_file_handles[i as usize]
-                        .1
-                        .write_all_at(buffer.as_slice(), 0)?;
-                }
-                for i in 0..n {
-                    let _ = &shard_file_handles[i as usize].1.sync_all()?;
+                for i in 0..n as usize {
+                    write_path(&shard_file_handles[i], buffer.as_slice())?;
                 }
             }
             BlockTopology::Erasure(_, data, parity) => {
@@ -400,6 +397,7 @@ impl VirtualBlock {
                 r.encode(&mut data_shards).unwrap();
 
                 let duration = start.elapsed();
+                histogram!(METRIC_ERASURE_ENCODING_DURATION).record(duration.as_micros() as f64);
                 debug!(
                     "[{}:{:#016x}] took {:?} to perform erasure encoding",
                     self.ino, self.idx, duration
@@ -407,10 +405,7 @@ impl VirtualBlock {
 
                 // TODO do these writes in parallel
                 for (i, shard) in data_shards.iter().enumerate() {
-                    let _ = &shard_file_handles[i].1.write_all_at(shard.as_slice(), 0)?;
-                }
-                for i in 0..data_shards.len() {
-                    let _ = &shard_file_handles[i].1.sync_all()?;
+                    write_path(&shard_file_handles[i], shard.as_slice())?;
                 }
             }
         }
@@ -484,6 +479,11 @@ impl VirtualBlock {
 
         match self.topology {
             BlockTopology::Single => {
+                counter!(METRIC_DISK_IO_OPERATION,
+                    "pool" => (&shard_file_handles[0].0.pool).clone(),
+                    "bucket" => (&shard_file_handles[0].0.bucket).clone(),
+                    "op" => "read",
+                ).increment(1);
                 let read_amt = &shard_file_handles[0].1.read(&mut buffer)?;
                 trace!(
                     "[{}:{:#016x}] read {} bytes from 1 shard",
@@ -503,6 +503,11 @@ impl VirtualBlock {
                     let mut ec_shards: Vec<Option<Vec<u8>>> = shard_file_handles
                         .iter_mut()
                         .map(|h| {
+                            counter!(METRIC_DISK_IO_OPERATION,
+                                "pool" => h.0.pool.clone(),
+                                "bucket" => h.0.bucket.clone(),
+                                "op" => "read",
+                            ).increment(1);
                             let mut buffer = vec![];
                             let read_op = h.1.read_to_end(&mut buffer);
                             if read_op.is_err() {
@@ -569,6 +574,30 @@ impl VirtualBlock {
         self.shard_loaded.store(false, Ordering::Relaxed);
         Ok(())
     }
+}
+
+fn write_path(shard: &(VirtualPath, File), buf: &[u8]) -> io::Result<()> {
+
+    let start = Instant::now();
+
+    shard.1.write_all_at(buf, 0)?;
+    shard.1.sync_all()?;
+
+    let duration = start.elapsed();
+
+    histogram!(METRIC_DISK_IO_OPERATION_DURATION,
+        "pool" => shard.0.pool.clone(),
+        "bucket" => shard.0.bucket.clone(),
+        "op" => "write"
+    ).record(duration.as_micros() as f64);
+
+    counter!(METRIC_DISK_IO_OPERATION,
+        "pool" => shard.0.pool.clone(),
+        "bucket" => shard.0.bucket.clone(),
+        "op" => "write",
+    ).increment(1);
+
+    Ok(())
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-// pub mod cache;
+pub mod cache;
 // pub mod flush;
 
 use rand::Rng;

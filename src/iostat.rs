@@ -1,7 +1,13 @@
+use log::debug;
+use metrics::{describe_counter, describe_histogram, histogram, Histogram};
 use std::mem;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+
+pub const METRIC_DISK_IO_OPERATION: &str = "disk_io_operation";
+pub const METRIC_DISK_IO_OPERATION_DURATION: &str = "disk_io_operation_duration";
+pub const METRIC_ERASURE_ENCODING_DURATION: &str = "erasure_encode_duration";
 
 const IO_TRACKER_ORDERING: Ordering = Ordering::Relaxed;
 #[derive(Debug, Clone)]
@@ -47,4 +53,23 @@ impl IOTracker {
 
         (then, read, write)
     }
+}
+
+pub fn measure(histogram: Histogram, f: fn()) {
+    let start = Instant::now();
+    f();
+    let duration = start.elapsed();
+
+    histogram.record(duration.as_micros() as f64)
+}
+
+
+pub fn describe_metrics() {
+    describe_counter!(METRIC_DISK_IO_OPERATION, "Disk I/O Operation Counter");
+
+    // Histograms
+    describe_histogram!(
+        METRIC_ERASURE_ENCODING_DURATION,
+        "Erasure Encoding Duration"
+    );
 }

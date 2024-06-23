@@ -74,16 +74,16 @@ impl ShmrFs {
         Ok(())
     }
 
-    fn check_access(&self, inode: u64, uid: u32, gid: u32, access_mask: i32) -> bool {
-        self.superblock.has(&inode)
-            && self
-                .superblock
-                .get(&inode)
-                .unwrap()
-                .unwrap()
-                .inode
-                .check_access(uid, gid, access_mask)
-    }
+    // fn check_access(&self, inode: u64, uid: u32, gid: u32, access_mask: i32) -> bool {
+    //     self.superblock.has(&inode)
+    //         && self
+    //             .superblock
+    //             .get(&inode)
+    //             .unwrap()
+    //             .unwrap()
+    //             .inode
+    //             .check_access(uid, gid, access_mask)
+    // }
 }
 
 #[cfg(test)]
