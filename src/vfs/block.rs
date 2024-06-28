@@ -1,3 +1,4 @@
+#![allow(clippy::needless_borrow)]
 use crate::config::{ShmrError, ShmrFsConfig};
 use crate::iostat::{
     measure, METRIC_DISK_IO_OPERATION, METRIC_DISK_IO_OPERATION_DURATION,

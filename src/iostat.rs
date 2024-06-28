@@ -1,5 +1,4 @@
-use log::debug;
-use metrics::{describe_counter, describe_histogram, histogram, Histogram};
+use metrics::{describe_counter, describe_histogram, Histogram};
 use std::mem;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};

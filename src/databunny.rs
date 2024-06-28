@@ -1,5 +1,5 @@
 use crate::tasks::{WorkerTask, WorkerThread};
-use log::{debug, error, info, trace};
+use log::{debug, error, info, trace, warn};
 use parking_lot::{ArcRwLockReadGuard, ArcRwLockWriteGuard, RawRwLock, RwLock};
 use serde::{de::DeserializeOwned, Serialize};
 use std::collections::BTreeMap;
@@ -292,8 +292,14 @@ impl<
         let entry_handle = self.entries.read();
 
         if let Some(entry) = entry_handle.get(key) {
-            let write_arc = entry.write_arc();
+            let entry_copy = entry.clone();
             drop(entry_handle);
+
+            if entry_copy.is_locked_exclusive() {
+                warn!("Entry Exclusively locked. Operation might hang")
+            }
+
+            let write_arc = entry_copy.write_arc();
 
             self.mark_dirty(key);
             return Ok(Some(write_arc));
@@ -350,6 +356,11 @@ impl<
             self.flush(&entry_id)?;
         }
         Ok(())
+    }
+
+    pub fn keys(&self) -> Vec<K> {
+        let binder = self.entries.read();
+        binder.keys().cloned().collect()
     }
 }
 // impl<

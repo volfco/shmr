@@ -18,6 +18,8 @@ fn system_time_from_time(secs: i64, nsecs: u32) -> SystemTime {
 pub struct SuperblockEntry {
     pub inode: Inode,
     pub inode_descriptor: InodeDescriptor,
+    /// Flag this entry for deletion
+    pub tombstone: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

@@ -1,4 +1,6 @@
-
+- unlink (rename) function
+- parallelize fsync
+- add warning statements around get_mut and other write locks
 - dbus implementations
   - Methods
     - co.volf.shmr.ShmrFs1
@@ -7,16 +9,20 @@
       - [ ] FlushInode
       - [ ] RewriteFile
       - [ ] "method to rewrite file with a new block size. i.e. 1MB to 32MB"
+      - [ ] PurgeTombstone(inode)
+      - [ ] GetTombstones
     - Properties
     - Signals
 - Background Processes
   - Memory Size Monitor Thing
     - Track used memory for file cache, and evict according to Io policy
-
 - Implement dbus server as a `WorkerTask`
 - Implement a `WorkerTask` Manager to view status of running tasks
 - Parallelize `flush` so all blocks in a VirtualFile flush in parallel
 - Writes don't hit the cache if the cache is empty?
+- shmr cli tool
+- shmr_crond daemon. runs housekeeping tasks and stuff via dbus calls
+  - tombstone cleanup !!!
 - File Compression
 - [ ] Adopt https://github.com/mehcode/config-rs for config file
 - [ ] Need to handle open file limits
@@ -32,7 +38,8 @@
     *i = 0;
     }
   ```
-  
+
+Library to sync metrics!() to a persistent on-disk format that can be read by others. Also can be queried by the application 
 
 ## Major Features
 - Write this as a kernel module? https://github.com/Rust-for-Linux/rust-out-of-tree-module/blob/main/rust_out_of_tree.rs

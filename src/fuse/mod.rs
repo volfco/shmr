@@ -151,6 +151,7 @@ impl ShmrFs {
                 SuperblockEntry {
                     inode: child_inode,
                     inode_descriptor: child_descriptor,
+                    tombstone: false,
                 },
             ) {
                 error!(
@@ -206,6 +207,7 @@ impl Filesystem for ShmrFs {
                     inner.insert(b".".to_vec(), FUSE_ROOT_ID);
                     inner
                 }),
+                tombstone: false,
             };
 
             if let Err(e) = self.superblock.insert(FUSE_ROOT_ID, superblock_entry) {
@@ -727,6 +729,59 @@ impl Filesystem for ShmrFs {
         }
     }
 
+    fn unlink(&mut self, req: &Request<'_>, parent: u64, name: &OsStr, reply: ReplyEmpty) {
+        trace!(
+            "FUSE({}) 'unlink' invoked. removing '{:?}' from {}",
+            req.unique(),
+            name,
+            parent
+        );
+
+        let mut parent_entry = self.superblock.get(&parent).unwrap().unwrap();
+        // done this way, so we don't need to hold the WriteGuard for longer than needed. the open file descriptor search
+        // could take a bit of time if there are a lot of open handles
+        let inode = if let InodeDescriptor::Directory(contents) = &parent_entry.inode_descriptor {
+            let ino = contents.get(&name.as_bytes().to_vec());
+            if ino.is_none() {
+                info!(
+                    "FUSE({}) Inode {:?} does not have an entry for '{:?}'",
+                    req.unique(),
+                    &parent,
+                    &name
+                );
+                reply.error(libc::ENOENT);
+                return;
+            }
+            let inode = ino.unwrap();
+            *inode
+        } else {
+            reply.error(libc::ENOENT);
+            return;
+        };
+
+        // check if there are any open file handles via scanning the open file handles
+        for entries in self.file_handles.iter() {
+            if inode == *entries.value() {
+                debug!("Can't delete inode {}. has open filehandles", inode);
+                reply.error(libc::EBUSY);
+                return;
+            }
+        }
+
+        // delete the entry from the parent directory and tombstone the inode
+        let mut parent_entry = self.superblock.get_mut(&parent).unwrap().unwrap();
+        if let InodeDescriptor::Directory(contents) = &mut parent_entry.inode_descriptor {
+            let _ = contents.remove(&name.as_bytes().to_vec()).expect("directory entry disappeared");
+        } else {
+            reply.error(libc::ENOENT);
+            return;
+        }
+        parent_entry.tombstone = true;
+
+        debug!("FUSE({}) toombstoned inode {}", req.unique(), inode);
+        reply.ok();
+    }
+    
     fn flush(&mut self, req: &Request<'_>, ino: u64, fh: u64, _lock_owner: u64, reply: ReplyEmpty) {
         trace!(
             "FUSE({}) 'flush' invoked on inode {} for fh {}",

@@ -36,19 +36,13 @@ pools:
     sdh:
       path: /mnt/sdh
 
-rlimit: 10240
+#  ssd0:
+#    CT480BX500SSD1_2029E407F807: /mnt/by-id/ata-CT480BX500SSD1_2029E407F807
+#    CT480BX500SSD1_2029E407F808: /mnt/by-id/ata-CT480BX500SSD1_2029E407F806
+#    CT480BX500SSD1_2029E407F809: /mnt/by-id/ata-CT480BX500SSD1_2029E407F808
+#    CT480BX500SSD1_2029E407F810: /mnt/by-id/ata-CT480BX500SSD1_2029E407F809
+#    CT480BX500SSD1_2029E407F811: /mnt/by-id/ata-CT480BX500SSD1_2029E407F805
+#
+#  hdd:
 
-cache:
-  max_memory: 1GiB
-
-sqlite_options:
-  # maximum size of database page cache
-  cache_size: 256MB
-  # Memory-mapped File I/O size
-  mmap_size: 256MB
-  cell_size_check: "true"
-#  main.synchronous: 0
-  # Store temp tables & indices in memory
-  temp_store: 2
-  # # of threads to launch. Default is 0 (which is only single threaded)
-  threads: 4
+block_size: 32MB
