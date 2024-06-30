@@ -5,7 +5,6 @@ use dbus::blocking::Connection;
 use dbus::MethodErr;
 use dbus_crossroads::{Context, Crossroads};
 use log::{error, info};
-use threadpool::ThreadPool;
 
 pub fn dbus_server(shmr_fs: ShmrFs) -> Result<(), dbus::Error> {
     let c = Connection::new_session()?;
@@ -26,8 +25,6 @@ pub fn dbus_server(shmr_fs: ShmrFs) -> Result<(), dbus::Error> {
                 error!("dbus::{}]. pool '{}' does not exist", ctx.method(), &pool_name);
                 return Err(MethodErr::invalid_arg("Invalid Pool Name"));
             }
-
-            let thread_pool = ThreadPool::new(parallel as usize);
 
             // check if the inode exists, and is a RegularFile
             let superblock_entry = shmr.superblock.get_mut(&inode).unwrap();

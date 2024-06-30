@@ -39,3 +39,6 @@ threadpool = "1.8.1"
 duckdb = "0.10"
 metrics = "0.23"
 metrics-dashboard = "0.2"
+
+rayon = "1.10"
+tracing = "0.1"

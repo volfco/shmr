@@ -1,8 +1,7 @@
 #![allow(clippy::needless_borrow)]
 use crate::config::{ShmrError, ShmrFsConfig};
 use crate::iostat::{
-    measure, METRIC_DISK_IO_OPERATION, METRIC_DISK_IO_OPERATION_DURATION,
-    METRIC_ERASURE_ENCODING_DURATION,
+    METRIC_DISK_IO_OPERATION, METRIC_DISK_IO_OPERATION_DURATION, METRIC_ERASURE_ENCODING_DURATION,
 };
 use crate::vfs::calculate_shard_size;
 use crate::vfs::path::{VirtualPath, VP_DEFAULT_FILE_EXT};
@@ -11,7 +10,6 @@ use metrics::{counter, histogram};
 use reed_solomon_erasure::galois_8::ReedSolomon;
 use serde::{Deserialize, Serialize};
 use std::default::Default;
-use std::{fmt, io};
 use std::fs::{File, OpenOptions};
 use std::io::Read;
 use std::os::unix::prelude::FileExt;
@@ -19,6 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use std::{cmp, mem};
+use std::{fmt, io};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum BlockTopology {
@@ -468,7 +467,6 @@ impl VirtualBlock {
         if !self.shard_loaded.load(Ordering::Relaxed) {
             self.open_handles()?;
         }
-        let mut shard_file_handles = self.shard_handles.lock().unwrap();
         let mut buffer = self.buffer.lock().unwrap();
 
         // because Vec has a length of zero by default, we need to size it before it's usable as a
@@ -478,13 +476,15 @@ impl VirtualBlock {
             buffer.resize(size, 0);
         }
 
+        let mut shard_file_handles = self.shard_handles.lock().unwrap();
         match self.topology {
             BlockTopology::Single => {
                 counter!(METRIC_DISK_IO_OPERATION,
                     "pool" => (&shard_file_handles[0].0.pool).clone(),
                     "bucket" => (&shard_file_handles[0].0.bucket).clone(),
                     "op" => "read",
-                ).increment(1);
+                )
+                .increment(1);
                 let read_amt = &shard_file_handles[0].1.read(&mut buffer)?;
                 trace!(
                     "[{}:{:#016x}] read {} bytes from 1 shard",
@@ -508,7 +508,8 @@ impl VirtualBlock {
                                 "pool" => h.0.pool.clone(),
                                 "bucket" => h.0.bucket.clone(),
                                 "op" => "read",
-                            ).increment(1);
+                            )
+                            .increment(1);
                             let mut buffer = vec![];
                             let read_op = h.1.read_to_end(&mut buffer);
                             if read_op.is_err() {
@@ -578,7 +579,6 @@ impl VirtualBlock {
 }
 
 fn write_path(shard: &(VirtualPath, File), buf: &[u8]) -> io::Result<()> {
-
     let start = Instant::now();
 
     shard.1.write_all_at(buf, 0)?;
@@ -590,13 +590,15 @@ fn write_path(shard: &(VirtualPath, File), buf: &[u8]) -> io::Result<()> {
         "pool" => shard.0.pool.clone(),
         "bucket" => shard.0.bucket.clone(),
         "op" => "write"
-    ).record(duration.as_micros() as f64);
+    )
+    .record(duration.as_micros() as f64);
 
     counter!(METRIC_DISK_IO_OPERATION,
         "pool" => shard.0.pool.clone(),
         "bucket" => shard.0.bucket.clone(),
         "op" => "write",
-    ).increment(1);
+    )
+    .increment(1);
 
     Ok(())
 }

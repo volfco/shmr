@@ -58,6 +58,7 @@ impl ShmrFs {
         rdev: u32,
         reply: ReplyEntry,
     ) {
+        // TODO implement whatever mode 755 is
         let file_type = mode as Mode & libc::S_IFMT;
         if file_type != libc::S_IFREG && file_type != libc::S_IFLNK && file_type != libc::S_IFDIR {
             // TODO
@@ -493,7 +494,7 @@ impl Filesystem for ShmrFs {
             parent,
             name
         );
-        self.create_entry(req, parent, name, mode, umask, 0, reply)
+        self.create_entry(req, parent, name, mode|libc::S_IFDIR, umask, 0, reply)
     }
 
     /// Rename a directory entry, possibly moving the entry from one inode to another.
@@ -695,7 +696,6 @@ impl Filesystem for ShmrFs {
             data.len()
         );
 
-        assert!(offset >= 0);
         let offset = offset as u64;
 
         let inode_entry = self.superblock.get_mut(&ino).unwrap();
@@ -737,7 +737,7 @@ impl Filesystem for ShmrFs {
             parent
         );
 
-        let mut parent_entry = self.superblock.get(&parent).unwrap().unwrap();
+        let parent_entry = self.superblock.get(&parent).unwrap().unwrap();
         // done this way, so we don't need to hold the WriteGuard for longer than needed. the open file descriptor search
         // could take a bit of time if there are a lot of open handles
         let inode = if let InodeDescriptor::Directory(contents) = &parent_entry.inode_descriptor {
@@ -771,7 +771,9 @@ impl Filesystem for ShmrFs {
         // delete the entry from the parent directory and tombstone the inode
         let mut parent_entry = self.superblock.get_mut(&parent).unwrap().unwrap();
         if let InodeDescriptor::Directory(contents) = &mut parent_entry.inode_descriptor {
-            let _ = contents.remove(&name.as_bytes().to_vec()).expect("directory entry disappeared");
+            let _ = contents
+                .remove(&name.as_bytes().to_vec())
+                .expect("directory entry disappeared");
         } else {
             reply.error(libc::ENOENT);
             return;
@@ -781,7 +783,7 @@ impl Filesystem for ShmrFs {
         debug!("FUSE({}) toombstoned inode {}", req.unique(), inode);
         reply.ok();
     }
-    
+
     fn flush(&mut self, req: &Request<'_>, ino: u64, fh: u64, _lock_owner: u64, reply: ReplyEmpty) {
         trace!(
             "FUSE({}) 'flush' invoked on inode {} for fh {}",
@@ -870,8 +872,13 @@ impl Filesystem for ShmrFs {
         }
     }
 
-    fn fsync(&mut self, req: &Request<'_>, ino: u64, _fh: u64, _datasync: bool, reply: ReplyEmpty) {
-        info!("FUSE({}) 'fsync' invoked on inode {}", req.unique(), ino);
+    fn fsync(&mut self, req: &Request<'_>, ino: u64, _fh: u64, datasync: bool, reply: ReplyEmpty) {
+        info!(
+            "FUSE({}) 'fsync' invoked on inode {}. datasync: {:?}",
+            req.unique(),
+            ino,
+            datasync
+        );
 
         // get the inode
         let inode_entry = self.superblock.get(&ino).unwrap();
@@ -883,7 +890,7 @@ impl Filesystem for ShmrFs {
 
         let inode_entry = inode_entry.unwrap();
         if let InodeDescriptor::File(file) = &inode_entry.inode_descriptor {
-            if let Err(e) = file.sync_data(true) {
+            if let Err(e) = file.sync_data(!datasync) {
                 warn!(
                     "FUSE({}) Error occurred when attempting to sync inode {}. {:?}",
                     req.unique(),

@@ -6,6 +6,9 @@ use crate::vfs::block::{BlockTopology, VirtualBlock};
 use crate::vfs::path::VIRTUAL_BLOCK_DEFAULT_SIZE;
 use crate::{ShmrError, VFS_DEFAULT_BLOCK_SIZE};
 use log::{debug, trace, warn};
+use rayon::iter::{
+    IntoParallelIterator, ParallelIterator,
+};
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use std::{cmp, mem};
@@ -86,8 +89,15 @@ impl VirtualFile {
 
     /// Sync the data on all blocks
     pub fn sync_data(&self, force: bool) -> Result<(), ShmrError> {
-        for block in self.blocks.iter() {
-            block.sync_data(force)?;
+        // attempt flush all blocks in parallel
+        let results: Vec<Result<(), ShmrError>> = (&self.blocks)
+            .into_par_iter()
+            .map(|block| block.sync_data(force))
+            .collect();
+        // then run over the results; bubbling up any errors
+        // I guess this is safer, as we attempt to flush every block before passing along errors
+        for block in results {
+            block?;
         }
         Ok(())
     }
@@ -169,33 +179,37 @@ impl VirtualFile {
     }
 
     pub fn write(&mut self, pos: u64, buf: &[u8]) -> Result<usize, ShmrError> {
-        let bf = buf.len() as u64;
-        if bf == 0 {
-            trace!("write request buf len == 0. nothing to do");
-            return Ok(0);
-        }
-
-        if pos % self.chunk_size != 0 {
-            panic!("cursor position does not align with block size")
-        }
-
         if self.config.is_none() {
             // because it has not been populated, we can assume that the underlying Blocks have not been as well
             panic!("pool_map has not been populated. Unable to perform operation.")
         };
 
-        let mut written: usize = 0;
+        let buf_len = buf.len() as u64;
+        if buf_len == 0 {
+            trace!("write request buf len == 0. nothing to do");
+            return Ok(0);
+        }
+
+        // The torrent client writes 1 byte at a random position, which may or may not align to the
+        // chunk size.
+        //
+        // so... we just need to make sure pos aligns to the start of the block and the remainder gets down to block_pos
+
+        let start_chunk = pos / self.chunk_size;
+        let end_chunk = (buf_len / self.chunk_size) + start_chunk;
         let chk_per_blk = self.block_size / self.chunk_size;
-        for chunk_idx in (pos / self.chunk_size)..=((pos + bf) / self.chunk_size) {
-            // allocate a new block if we're out of space to write the chunk
-            if (self.blocks.len() as u64 * chk_per_blk) <= chunk_idx {
+
+        let mut written: usize = 0;
+        for chunk_idx in start_chunk..=end_chunk {
+            // allocate blocks until we have enough blocks for this chunk
+            while (self.blocks.len() as u64 * chk_per_blk) <= chunk_idx {
                 self.allocate_block()?;
             }
 
             let block_idx = (chunk_idx * self.chunk_size) / self.block_size;
             let block_pos = (chunk_idx * self.chunk_size) % self.block_size;
 
-            let buf_end = cmp::min(written as u64 + self.chunk_size, bf) as usize;
+            let buf_end = cmp::min(written as u64 + self.chunk_size, buf_len) as usize;
 
             trace!(
                 "writing {} bytes to chunk {} (mapping to block_idx:{} / block_pos:{})",
@@ -209,7 +223,7 @@ impl VirtualFile {
         }
 
         // size is the largest (offset + written buffer)
-        self.size = cmp::max(self.size, pos + bf);
+        self.size = cmp::max(self.size, pos + buf_len);
 
         self.io_stat.inc_write();
         Ok(written)
@@ -252,7 +266,8 @@ mod tests {
     use crate::vfs::path::VIRTUAL_BLOCK_DEFAULT_SIZE;
     use crate::vfs::VirtualFile;
     use crate::VFS_DEFAULT_BLOCK_SIZE;
-    use std::collections::HashMap;
+    use bytesize::ByteSize;
+    use std::collections::{BTreeMap, HashMap};
     use std::io::Read;
     use std::path::PathBuf;
 
@@ -268,7 +283,7 @@ mod tests {
             },
         );
 
-        let mut pools = HashMap::new();
+        let mut pools = BTreeMap::new();
         pools.insert("test_pool".to_string(), buckets);
 
         VirtualFile {
@@ -282,13 +297,14 @@ mod tests {
                 mount_dir: Default::default(),
                 pools,
                 write_pool: "test_pool".to_string(),
+                block_size: ByteSize(1024 * 1024),
             }),
             io_stat: IOTracker::default(),
         }
     }
 
     #[test]
-    fn test_virtual_file() {
+    fn test_virtual_file_1() {
         let mut vf = gen_virtual_file();
         let data = random_data(7000);
 
@@ -323,7 +339,7 @@ mod tests {
         let mut vf = gen_virtual_file();
         let data = random_data(2 * 1024 * 1024);
 
-        let written = vf.write(0, &data);
+        let _written = vf.write(0, &data);
 
         assert_eq!(vf.size, 2 * 1024 * 1024);
         assert_eq!(vf.blocks.len(), 3);

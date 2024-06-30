@@ -62,7 +62,6 @@ pub fn measure(histogram: Histogram, f: fn()) {
     histogram.record(duration.as_micros() as f64)
 }
 
-
 pub fn describe_metrics() {
     describe_counter!(METRIC_DISK_IO_OPERATION, "Disk I/O Operation Counter");
 

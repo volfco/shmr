@@ -89,7 +89,8 @@ impl ShmrFs {
 #[cfg(test)]
 pub mod tests {
     use crate::config::{Bucket, ShmrFsConfig};
-    use std::collections::HashMap;
+    use bytesize::ByteSize;
+    use std::collections::{BTreeMap, HashMap};
     use std::path::PathBuf;
 
     pub fn get_shmr_config() -> ShmrFsConfig {
@@ -104,7 +105,7 @@ pub mod tests {
             },
         );
 
-        let mut pools = HashMap::new();
+        let mut pools = BTreeMap::new();
         pools.insert("test_pool".to_string(), buckets);
 
         ShmrFsConfig {
@@ -112,6 +113,7 @@ pub mod tests {
             mount_dir: Default::default(),
             pools,
             write_pool: "test_pool".to_string(),
+            block_size: ByteSize(1024 * 1024),
         }
     }
 }

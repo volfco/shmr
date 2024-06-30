@@ -7,12 +7,37 @@ use std::fmt::Debug;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Instant;
 
 pub const ZSTD_COMPRESSION_DEFAULT: i32 = 5;
 
+pub trait BunnyName {
+    fn to_string(&self) -> String;
+    // TODO Make a Result
+    fn from_string(_: String) -> Self;
+    fn as_bytes(&self) -> Vec<u8>;
+    fn from_bytes(buf: Vec<u8>) -> Self;
+}
+impl BunnyName for u64 {
+    fn to_string(&self) -> String {
+        std::string::ToString::to_string(&self)
+    }
+
+    fn from_string(val: String) -> Self {
+        val.parse().unwrap()
+    }
+
+    fn as_bytes(&self) -> Vec<u8> {
+        self.to_le_bytes().to_vec()
+    }
+
+    fn from_bytes(buf: Vec<u8>) -> Self {
+        let as_str = String::from_utf8(buf).unwrap();
+        // u64::from_le_bytes(buf[..std::mem::size_of::<u64>()].try_into().unwrap())
+        as_str.parse().unwrap()
+    }
+}
 pub trait StorageBackend: Debug + Send + Sync {
     /// Load the given key from disk
     fn load(&self, key: &[u8]) -> Result<Option<Vec<u8>>, BunnyError>;
@@ -201,7 +226,7 @@ pub type Entries<K, V> = Arc<RwLock<BTreeMap<K, Arc<RwLock<V>>>>>;
 /// Basic In-memory database with persistence.
 #[derive(Debug, Clone)]
 pub struct DataBunny<
-    K: ToString + FromStr + Clone + Send + Sync + Ord + 'static,
+    K: BunnyName + Clone + Send + Sync + Ord + 'static,
     V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
 > {
     entries: Entries<K, V>,
@@ -210,13 +235,11 @@ pub struct DataBunny<
     worker_thread: Option<WorkerThread<BunnyWorker<K, V>>>,
 }
 impl<
-        K: ToString + FromStr + Clone + Send + Sync + Ord + 'static,
+        K: BunnyName + Clone + Send + Sync + Ord + 'static,
         V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
     > DataBunny<K, V>
 {
     pub fn open(path: &Path, compression: CompressionMethod) -> Result<Self, BunnyError>
-    where
-        <K as FromStr>::Err: Debug,
     {
         let sb = FilePerKey {
             compression,
@@ -225,11 +248,9 @@ impl<
 
         let mut entries_tree: BTreeMap<K, Arc<RwLock<V>>> = BTreeMap::new();
         for record in sb.load_all()? {
-            let s = String::from_utf8(record.0).unwrap();
-            eprintln!("string: {}", s);
-            let k: K = K::from_str(&s).unwrap();
+
             entries_tree.insert(
-                k,
+                K::from_bytes(record.0),
                 Arc::new(RwLock::new(
                     serde_yaml::from_slice(record.1.as_slice()).unwrap(),
                 )),
@@ -397,13 +418,13 @@ impl<
 
 #[derive(Debug, Clone)]
 struct BunnyWorker<
-    K: ToString + FromStr + Clone + Send + Sync + Ord + 'static,
+    K: BunnyName + Clone + Send + Sync + Ord + 'static,
     V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
 > {
     inner: Arc<DataBunny<K, V>>,
 }
 impl<
-        K: ToString + FromStr + Clone + Send + Sync + Ord + 'static,
+        K: BunnyName + Clone + Send + Sync + Ord + 'static,
         V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
     > BunnyWorker<K, V>
 {
@@ -414,7 +435,7 @@ impl<
     }
 }
 impl<
-        K: ToString + FromStr + Clone + Send + Sync + Ord + 'static,
+        K: BunnyName + Clone + Send + Sync + Ord + 'static,
         V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
     > WorkerTask for BunnyWorker<K, V>
 {
