@@ -5,6 +5,7 @@ use std::fmt::Display;
 use std::fs::OpenOptions;
 use std::ops::Deref;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[allow(clippy::identity_op)]
 pub const VIRTUAL_BLOCK_DEFAULT_SIZE: u64 = 1024 * 1024 * 1;
@@ -46,7 +47,7 @@ impl VirtualPath {
         Ok(result)
     }
 
-    pub fn create(&self, map: &ShmrFsConfig) -> Result<(), ShmrError> {
+    pub fn create(&self, map: &Arc<ShmrFsConfig>) -> Result<(), ShmrError> {
         let full_path = self.resolve(map)?;
 
         // ensure the directory exists

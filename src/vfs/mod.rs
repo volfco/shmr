@@ -6,10 +6,9 @@ use crate::vfs::block::{BlockTopology, VirtualBlock};
 use crate::vfs::path::VIRTUAL_BLOCK_DEFAULT_SIZE;
 use crate::{ShmrError, VFS_DEFAULT_BLOCK_SIZE};
 use log::{debug, trace, warn};
-use rayon::iter::{
-    IntoParallelIterator, ParallelIterator,
-};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::Instant;
 use std::{cmp, mem};
 
@@ -50,7 +49,7 @@ pub struct VirtualFile {
     pub block_size: u64,
 
     #[serde(skip)]
-    config: Option<ShmrFsConfig>,
+    config: Option<Arc<ShmrFsConfig>>,
 
     #[serde(skip)]
     io_stat: IOTracker,
@@ -80,7 +79,7 @@ impl VirtualFile {
         vf
     }
 
-    pub fn populate(&mut self, config: ShmrFsConfig) {
+    pub fn populate(&mut self, config: Arc<ShmrFsConfig>) {
         for block in self.blocks.iter_mut() {
             block.populate(config.clone());
         }
@@ -121,7 +120,7 @@ impl VirtualFile {
         let block = VirtualBlock::create(
             self.ino,
             next,
-            pools,
+            pools.clone(),
             self.block_size,
             BlockTopology::Single,
         )?;
@@ -270,6 +269,7 @@ mod tests {
     use std::collections::{BTreeMap, HashMap};
     use std::io::Read;
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     fn gen_virtual_file() -> VirtualFile {
         let mut buckets = HashMap::new();
@@ -292,13 +292,13 @@ mod tests {
             chunk_size: VFS_DEFAULT_BLOCK_SIZE,
             blocks: Vec::new(),
             block_size: VIRTUAL_BLOCK_DEFAULT_SIZE,
-            config: Some(ShmrFsConfig {
+            config: Some(Arc::new(ShmrFsConfig {
                 metadata_dir: Default::default(),
                 mount_dir: Default::default(),
                 pools,
                 write_pool: "test_pool".to_string(),
                 block_size: ByteSize(1024 * 1024),
-            }),
+            })),
             io_stat: IOTracker::default(),
         }
     }

@@ -494,7 +494,7 @@ impl Filesystem for ShmrFs {
             parent,
             name
         );
-        self.create_entry(req, parent, name, mode|libc::S_IFDIR, umask, 0, reply)
+        self.create_entry(req, parent, name, mode | libc::S_IFDIR, umask, 0, reply)
     }
 
     /// Rename a directory entry, possibly moving the entry from one inode to another.

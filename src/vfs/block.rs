@@ -154,7 +154,7 @@ pub struct VirtualBlock {
     // none, because poolmap will default to a LazyLock that can be populated before the file is read from the database.
     // bit of a hack to give the poolmap a default value, but it works.
     #[serde(skip)]
-    pool_map: Option<ShmrFsConfig>,
+    pool_map: Option<Arc<ShmrFsConfig>>,
 }
 impl Default for VirtualBlock {
     fn default() -> Self {
@@ -173,11 +173,12 @@ impl Default for VirtualBlock {
         }
     }
 }
+#[allow(dead_code)]
 impl VirtualBlock {
     pub fn new() -> Self {
         Default::default()
     }
-    pub fn populate(&mut self, map: ShmrFsConfig) {
+    pub fn populate(&mut self, map: Arc<ShmrFsConfig>) {
         self.pool_map = Some(map);
     }
 
@@ -189,20 +190,27 @@ impl VirtualBlock {
     pub fn create(
         ino: u64,
         idx: u64,
-        config: &ShmrFsConfig,
+        config: Arc<ShmrFsConfig>,
         size: u64,
         topology: BlockTopology,
     ) -> Result<Self, ShmrError> {
-        VirtualBlock::create_with_pool(ino, idx, config, size, topology, &config.write_pool)
+        VirtualBlock::create_with_pool(
+            ino,
+            idx,
+            config.write_pool.clone().as_str(),
+            config,
+            size,
+            topology,
+        )
     }
 
     pub fn create_with_pool(
         ino: u64,
         idx: u64,
-        config: &ShmrFsConfig,
+        pool: &str,
+        config: Arc<ShmrFsConfig>,
         size: u64,
         topology: BlockTopology,
-        pool: &str,
     ) -> Result<Self, ShmrError> {
         debug!(
             "[{}:{:#016x}] creating new VirtualBlock of size {} in pool '{}'",
@@ -218,14 +226,24 @@ impl VirtualBlock {
         let buckets = config.select_buckets(pool, needed_shards)?;
         let mut shards = vec![];
         for (i, bucket) in buckets.into_iter().enumerate() {
+            // TODO need to add some randomness
+            let mut filename = ino.to_string();
+            filename += ":";
+            filename.push_str(&idx.to_string());
+            filename += "_";
+            filename.push_str(&ident.to_string());
+            filename += "_";
+            filename.push_str(&i.to_string());
+            filename += ".";
+            filename.push_str(VP_DEFAULT_FILE_EXT);
+
             let vpf = VirtualPath {
                 pool: pool.to_string(),
                 bucket,
-                // need to add some randomness
-                filename: format!("{}:{}_{}_{}.{}", ino, idx, ident, i, VP_DEFAULT_FILE_EXT),
+                filename,
             };
             // create the backing file while we're initializing everything
-            vpf.create(config)?;
+            vpf.create(&config)?;
 
             shards.push(vpf);
         }
@@ -241,7 +259,7 @@ impl VirtualBlock {
             shard_loaded: Arc::new(AtomicBool::new(false)),
             should_flush: Arc::new(AtomicBool::new(false)),
             buffer: Arc::new(Mutex::new(vec![])),
-            pool_map: Some(config.clone()),
+            pool_map: Some(config),
         })
     }
 
@@ -612,6 +630,7 @@ mod tests {
     use std::io::Read;
     use std::os::unix::prelude::MetadataExt;
     use std::sync::atomic::Ordering;
+    use std::sync::Arc;
 
     #[test]
     fn test_block_topology_try_from() {
@@ -629,9 +648,9 @@ mod tests {
 
     #[test]
     fn test_virtual_block_new_block() {
-        let cfg = get_shmr_config();
+        let cfg = Arc::new(get_shmr_config());
 
-        let block = VirtualBlock::create(1, 0, &cfg, 1024, BlockTopology::Single);
+        let block = VirtualBlock::create(1, 0, cfg.clone(), 1024, BlockTopology::Single);
         assert!(block.is_ok());
 
         let block = block.unwrap();
@@ -645,9 +664,9 @@ mod tests {
 
     #[test]
     fn test_virtual_block_unbuffered_backing() {
-        let cfg = get_shmr_config();
+        let cfg = Arc::new(get_shmr_config());
 
-        let block = VirtualBlock::create(3, 0, &cfg, 1024, BlockTopology::Single);
+        let block = VirtualBlock::create(3, 0, cfg.clone(), 1024, BlockTopology::Single);
         assert!(block.is_ok());
 
         let block = block.unwrap();
@@ -680,9 +699,9 @@ mod tests {
 
     #[test]
     fn test_virtual_block_unbuffered() {
-        let cfg = get_shmr_config();
+        let cfg = Arc::new(get_shmr_config());
 
-        let block = VirtualBlock::create(3, 0, &cfg, 1024, BlockTopology::Single);
+        let block = VirtualBlock::create(3, 0, cfg.clone(), 1024, BlockTopology::Single);
         assert!(block.is_ok());
 
         let block = block.unwrap();
@@ -714,9 +733,9 @@ mod tests {
 
     #[test]
     fn test_virtual_block_buffered() {
-        let cfg = get_shmr_config();
+        let cfg = Arc::new(get_shmr_config());
 
-        let block = VirtualBlock::create(5, 0, &cfg, 1024, BlockTopology::Single);
+        let block = VirtualBlock::create(5, 0, cfg.clone(), 1024, BlockTopology::Single);
         assert!(block.is_ok());
 
         let block = block.unwrap();
@@ -767,9 +786,9 @@ mod tests {
 
     #[test]
     fn test_virtual_block_erasure_buffered() {
-        let cfg = get_shmr_config();
+        let cfg = Arc::new(get_shmr_config());
 
-        let block = VirtualBlock::create(7, 0, &cfg, 1024, BlockTopology::Single);
+        let block = VirtualBlock::create(7, 0, cfg.clone(), 1024, BlockTopology::Single);
         assert!(block.is_ok());
 
         let block = block.unwrap();

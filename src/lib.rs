@@ -23,7 +23,7 @@ pub const VFS_DEFAULT_BLOCK_SIZE: u64 = 4096;
 
 #[derive(Clone, Debug)]
 pub struct ShmrFs {
-    pub config: ShmrFsConfig,
+    pub config: Arc<ShmrFsConfig>,
 
     superblock: DataBunny<u64, SuperblockEntry>,
 
@@ -41,7 +41,7 @@ impl ShmrFs {
 
         let shmr = Self {
             superblock: DataBunny::open(&config.metadata_dir, CompressionMethod::Zstd(20)).unwrap(),
-            config,
+            config: Arc::new(config),
             // file_cache_strategy: Arc::new(Mutex::new(FileCacheStrategy::Read)),
             file_handles: Arc::new(Default::default()),
         };

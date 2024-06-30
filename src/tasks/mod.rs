@@ -60,10 +60,12 @@ impl<T: WorkerTask + Sized + 'static> WorkerThread<T> {
         *h = Some(handle);
     }
 
+    #[allow(dead_code)]
     fn stop(&self) {
         self.run.store(false, Ordering::Relaxed);
     }
 
+    #[allow(dead_code)]
     fn stop_wait(&self) {
         let mut handle = self.join_handle.lock().unwrap();
         if handle.is_none() {

@@ -12,6 +12,7 @@ use std::time::Instant;
 
 pub const ZSTD_COMPRESSION_DEFAULT: i32 = 5;
 
+#[allow(dead_code)]
 pub trait BunnyName {
     fn to_string(&self) -> String;
     // TODO Make a Result
@@ -44,8 +45,6 @@ pub trait StorageBackend: Debug + Send + Sync {
 
     /// Return a Vector of all (Key, Value) pairs on disk
     fn load_all(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>, BunnyError>;
-
-    fn exists(&self, key: &[u8]) -> bool;
 
     /// Write the given key,value pair to disk.
     /// This assumes that the data is fully persisted upon return
@@ -184,10 +183,10 @@ impl StorageBackend for FilePerKey {
 
         Ok(entries)
     }
-
-    fn exists(&self, key: &[u8]) -> bool {
-        self.get_path(key).exists()
-    }
+    //
+    // fn exists(&self, key: &[u8]) -> bool {
+    //     self.get_path(key).exists()
+    // }
 
     fn save(&self, key: Vec<u8>, val: Vec<u8>) -> Result<(), BunnyError> {
         let contents = match self.compression {
@@ -239,8 +238,7 @@ impl<
         V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
     > DataBunny<K, V>
 {
-    pub fn open(path: &Path, compression: CompressionMethod) -> Result<Self, BunnyError>
-    {
+    pub fn open(path: &Path, compression: CompressionMethod) -> Result<Self, BunnyError> {
         let sb = FilePerKey {
             compression,
             base_dir: path.to_path_buf(),
@@ -248,7 +246,6 @@ impl<
 
         let mut entries_tree: BTreeMap<K, Arc<RwLock<V>>> = BTreeMap::new();
         for record in sb.load_all()? {
-
             entries_tree.insert(
                 K::from_bytes(record.0),
                 Arc::new(RwLock::new(
@@ -379,10 +376,10 @@ impl<
         Ok(())
     }
 
-    pub fn keys(&self) -> Vec<K> {
-        let binder = self.entries.read();
-        binder.keys().cloned().collect()
-    }
+    // pub fn keys(&self) -> Vec<K> {
+    //     let binder = self.entries.read();
+    //     binder.keys().cloned().collect()
+    // }
 }
 // impl<
 //     K: Serialize + DeserializeOwned + Clone + Send + Sync + Ord + 'static,

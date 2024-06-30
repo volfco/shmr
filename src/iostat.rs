@@ -43,6 +43,7 @@ impl IOTracker {
     }
 
     /// Read the IO Operations since the given Instant. Resets counters after
+    #[allow(dead_code)]
     pub fn read(&self) -> (Instant, usize, usize) {
         let mut when = self.when.lock().unwrap();
         let read = self.read.swap(0, IO_TRACKER_ORDERING);

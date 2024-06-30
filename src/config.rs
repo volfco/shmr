@@ -39,6 +39,7 @@ impl ShmrFsConfig {
     /// Select n Buckets from the given pool
     pub fn select_buckets(&self, pool: &str, count: usize) -> Result<Vec<String>, ShmrError> {
         // TODO This function is ugly and could be refactored
+        // TODO Eliminate un-needed clone operations
         // for now, we are going to return the pools in order of Priority & Free Space Percentage
         let mut possible_buckets: Vec<(&String, &Bucket)> = self
             .pools

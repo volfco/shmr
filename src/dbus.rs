@@ -19,7 +19,7 @@ pub fn dbus_server(shmr_fs: ShmrFs) -> Result<(), dbus::Error> {
 
         // Rewrite an entire file to the given pool
         // parallel is # of blocks to rewrite in parallel
-        b.method("RewriteFile", ("inode", "topology", "pool_name", "parallel"), ("reply",), move |ctx: &mut Context, shmr: &mut ShmrFs, (inode, topology, pool_name, parallel): (u64, String, String, u64)| {
+        b.method("RewriteFile", ("inode", "topology", "pool_name", "parallel"), ("reply",), move |ctx: &mut Context, shmr: &mut ShmrFs, (inode, _topology, pool_name, _parallel): (u64, String, String, u64)| {
 
             if !shmr.config.has_pool(&pool_name) {
                 error!("dbus::{}]. pool '{}' does not exist", ctx.method(), &pool_name);
@@ -87,7 +87,7 @@ pub fn dbus_server(shmr_fs: ShmrFs) -> Result<(), dbus::Error> {
                         // populate the old file, in case it hasn't been already
                         virtual_file.populate(shmr.config.clone());
 
-                        let mut new_block = match VirtualBlock::create_with_pool(inode, block_idx, &shmr.config, virtual_file.block_size, new_block_topology, &pool_name) {
+                        let mut new_block = match VirtualBlock::create_with_pool(inode, block_idx, &pool_name, shmr.config.clone(), virtual_file.block_size, new_block_topology) {
                             Ok(block) => block,
                             Err(err) => {
                                 error!("dbus::{}] inode:{}] Failed to create VirtualBlock. {:?}", ctx.method(), &inode, err);

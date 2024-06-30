@@ -8,6 +8,7 @@ use crate::vfs::VirtualFile;
 use dashmap::DashMap;
 use std::sync::Arc;
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct CacheWorker {
     config: ShmrFsConfig,

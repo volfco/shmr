@@ -1,5 +1,5 @@
-- unlink (rename) function
-- parallelize fsync
+- ~~unlink (rename) function~~
+- ~~Parallelize `flush` so all blocks in a VirtualFile flush in parallel~~
 - add warning statements around get_mut and other write locks
 - dbus implementations
   - Methods
@@ -16,9 +16,7 @@
 - Background Processes
   - Memory Size Monitor Thing
     - Track used memory for file cache, and evict according to Io policy
-- Implement dbus server as a `WorkerTask`
 - Implement a `WorkerTask` Manager to view status of running tasks
-- Parallelize `flush` so all blocks in a VirtualFile flush in parallel
 - Writes don't hit the cache if the cache is empty?
 - shmr cli tool
 - shmr_crond daemon. runs housekeeping tasks and stuff via dbus calls
