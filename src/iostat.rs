@@ -4,9 +4,37 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+pub const METRIC_VFS_FUSE_RPC: &str = "vfs_fuse_rpc";
+pub const METRIC_VFS_FUSE_RPC_DURATION: &str = "vfs_fuse_rpc_duration";
+pub const METRIC_VFS_OPEN_INODES: &str = "vfs_open_inodes";
+pub const METRIC_VFS_SUPERBLOCK_MEM_SIZE :&str = "vfs_superblock_memory_size";
+pub const METRIC_VFS_SUPERBLOCK_ENTRIES :&str = "vfs_superblock_entries";
+pub const METRIC_VFS_INODE_MEM_SIZE: &str = "vfs_inode_memory_size";
+
+/// Number of File Handles opened for Inodes in the Virtual Filesystem
+pub const METRIC_VFS_OPEN_FILE_HANDLES: &str = "vfs_open_file_handles";
+pub const METRIC_VFS_IO_OPERATION: &str = "vfs_io_operation";
+pub const METRIC_VFS_IO_OPERATION_DURATION: &str = "vfs_io_operation_duration";
+
+// pub const METRIC_OPEN_FILE_HANDLES: &str = "open_file_handles";
+
+pub const METRIC_DISK_USAGE: &str = "disk_usage";
 pub const METRIC_DISK_IO_OPERATION: &str = "disk_io_operation";
 pub const METRIC_DISK_IO_OPERATION_DURATION: &str = "disk_io_operation_duration";
 pub const METRIC_ERASURE_ENCODING_DURATION: &str = "erasure_encode_duration";
+
+// Task Manager Metrics
+// TODO Eventually move these into tasks/mod.rs or metrics.rs
+pub const METRIC_TASKMGR_STATUS :&str = "taskmgr_status";
+pub const METRIC_TASKMGR_LOOP_DURATION :&str = "taskmgr_loop_duration";
+pub const METRIC_TASKMGR_LOOP_RESULT :&str = "taskmgr_loop_result";
+
+/// Measures how often the Rayon ThreadPool is busy when checked
+pub const METRIC_RAYON_THREADPOOL_BUSY :&str = "rayon_threadpool_busy";
+// pub const METRIC_ :&str = "";
+// pub const METRIC_ :&str = "";
+// pub const METRIC_ :&str = "";
+
 
 const IO_TRACKER_ORDERING: Ordering = Ordering::Relaxed;
 #[derive(Debug, Clone)]
@@ -65,6 +93,7 @@ pub fn measure(histogram: Histogram, f: fn()) {
 
 pub fn describe_metrics() {
     describe_counter!(METRIC_DISK_IO_OPERATION, "Disk I/O Operation Counter");
+    describe_counter!(METRIC_VFS_FUSE_RPC, "fpp");
 
     // Histograms
     describe_histogram!(

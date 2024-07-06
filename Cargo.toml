@@ -34,11 +34,9 @@ dbus = "0.9"
 dbus-codegen = "0.11"
 dbus-crossroads = "0.5"
 futures = { version = "0.3.30", features = ["thread-pool"] }
-threadpool = "1.8.1"
-
-duckdb = "0.10"
+get-size = { version = "^0.1", features = ["derive"] }
 metrics = "0.23"
-metrics-dashboard = "0.2"
-
+metrics-util = "0.17"
+metrics-exporter-prometheus = {  version = "0.15", features = ["push-gateway"] }
 rayon = "1.10"
 tracing = "0.1"

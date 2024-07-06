@@ -46,3 +46,7 @@ pools:
 #  hdd:
 
 block_size: 32MB
+
+prometheus_endpoint: http://203.0.113.2:9091/metrics/job/shmr
+prometheus_username: root@example.com
+prometheus_password: 1OSqBLhjoXposoIM

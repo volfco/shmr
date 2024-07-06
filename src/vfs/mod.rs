@@ -1,7 +1,7 @@
 pub mod block;
 pub mod path;
 use crate::config::ShmrFsConfig;
-use crate::iostat::IOTracker;
+use crate::iostat::{IOTracker, METRIC_VFS_IO_OPERATION, METRIC_VFS_IO_OPERATION_DURATION};
 use crate::vfs::block::{BlockTopology, VirtualBlock};
 use crate::vfs::path::VIRTUAL_BLOCK_DEFAULT_SIZE;
 use crate::{ShmrError, VFS_DEFAULT_BLOCK_SIZE};
@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Instant;
 use std::{cmp, mem};
+use metrics::{counter, histogram};
 
 fn calculate_shard_size(length: u64, data_shards: u8) -> usize {
     (length as f32 / data_shards as f32).ceil() as usize
@@ -134,10 +135,16 @@ impl VirtualFile {
     }
 
     pub fn read(&self, pos: u64, buf: &mut [u8]) -> Result<usize, ShmrError> {
-        debug!("reading {} bytes starting at pos {}", buf.len(), pos);
-        let bf = buf.len() as u64;
-        if bf == 0 || self.size == 0 {
-            eprintln!("mark");
+        if self.config.is_none() {
+            // because it has not been populated, we can assume that the underlying Blocks have not been as well
+            panic!("pool_map has not been populated. Unable to perform operation.")
+        };
+        counter!(METRIC_VFS_IO_OPERATION, "operation" => "read", "inode" => self.ino.to_string()).increment(1);
+        let histogram = histogram!(METRIC_VFS_IO_OPERATION_DURATION, "operation" => "read", "inode" => self.ino.to_string());
+        let start = Instant::now();
+
+        let buf_len = buf.len() as u64;
+        if buf_len == 0 || self.size == 0 {
             return Ok(0);
         }
 
@@ -145,35 +152,29 @@ impl VirtualFile {
             return Err(ShmrError::EndOfFile);
         }
 
-        if self.config.is_none() {
-            // because it has not been populated, we can assume that the underlying Blocks have not been as well
-            panic!("pool_map has not been populated. Unable to perform operation.")
-        };
+        let start_chunk = pos / self.chunk_size;
+        let end_chunk = (buf_len / self.chunk_size) + start_chunk;
 
         let mut read: usize = 0; // amount read
-        let mut chk_pos = pos % self.chunk_size; // initial chunk offset
-        let pos_chk = pos / self.chunk_size;
-        let buf_chk = bf / self.chunk_size + (chk_pos != 0) as u64; // got this nifty solution off Reddit. Thanks /u/HeroicKatora
-
-        let chunk_range = pos_chk..=pos_chk + buf_chk;
-
-        for chunk_idx in chunk_range {
+        for chunk_idx in start_chunk..=end_chunk {
             let block_idx = (chunk_idx * self.chunk_size) / self.block_size;
             let block_pos = (chunk_idx * self.chunk_size) % self.block_size;
 
-            // we might get a read that starts in the middle a chunk
-            // in that case, just move the block cursor forward the amount of the chunk offset
-            let read_pos = (block_pos + chk_pos) as usize;
-            let read_amt = cmp::min(bf, read as u64 + self.chunk_size - chk_pos) as usize;
+            let buf_end = cmp::min(read as u64 + self.chunk_size, buf_len) as usize;
 
-            trace!("reading {} bytes from chunk {} (mapping to block_idx:{} / block_pos:{} / read_pos:{})", read_amt, chunk_idx, block_idx, block_pos, read_pos);
+            trace!(
+                "reading {} bytes to chunk {} (mapping to block_idx:{} / block_pos:{})",
+                buf_end - read,
+                chunk_idx,
+                block_idx,
+                block_pos
+            );
 
-            read += &self.blocks[block_idx as usize].read(read_pos, &mut buf[read..read_amt])?;
-
-            chk_pos = 0;
+            read += self.blocks[block_idx as usize].read(block_pos, &mut buf[read..buf_end])?;
         }
 
         self.io_stat.inc_read();
+        histogram.record(start.elapsed());
         Ok(read)
     }
 
@@ -182,6 +183,9 @@ impl VirtualFile {
             // because it has not been populated, we can assume that the underlying Blocks have not been as well
             panic!("pool_map has not been populated. Unable to perform operation.")
         };
+        counter!(METRIC_VFS_IO_OPERATION, "operation" => "write", "inode" => self.ino.to_string()).increment(1);
+        let histogram = histogram!(METRIC_VFS_IO_OPERATION_DURATION, "operation" => "write", "inode" => self.ino.to_string());
+        let start = Instant::now();
 
         let buf_len = buf.len() as u64;
         if buf_len == 0 {
@@ -225,6 +229,7 @@ impl VirtualFile {
         self.size = cmp::max(self.size, pos + buf_len);
 
         self.io_stat.inc_write();
+        histogram.record(start.elapsed());
         Ok(written)
     }
 

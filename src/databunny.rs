@@ -353,11 +353,20 @@ impl<
 
     /// Serialize & Flush the given entry to the underlying database, and then flush the database
     pub fn flush(&self, ident: &K) -> Result<(), BunnyError> {
-        if let Some(inner) = self.get(ident)? {
-            let key = ident.to_string();
-            let val = serde_yaml::to_string(&*inner)?.as_bytes().to_vec();
-            self.storage_backend.save(key.as_bytes().to_vec(), val)?;
+        let binding = self.get(ident)?;
+        if binding.is_none() {
+            debug!("flush called on non-existent entry");
+            return Ok(());
         }
+
+        let binding = binding.unwrap();
+
+        let key = ident.to_string();
+        let val = serde_yaml::to_string(&*binding)?.as_bytes().to_vec();
+
+        drop(binding);
+
+        self.storage_backend.save(key.as_bytes().to_vec(), val)?;
         Ok(())
     }
 
@@ -370,6 +379,7 @@ impl<
         handle.sort();
         handle.dedup();
 
+        // TODO Do this in parallel via rayon
         while let Some(entry_id) = handle.pop() {
             self.flush(&entry_id)?;
         }

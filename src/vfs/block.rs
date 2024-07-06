@@ -1,8 +1,6 @@
 #![allow(clippy::needless_borrow)]
 use crate::config::{ShmrError, ShmrFsConfig};
-use crate::iostat::{
-    METRIC_DISK_IO_OPERATION, METRIC_DISK_IO_OPERATION_DURATION, METRIC_ERASURE_ENCODING_DURATION,
-};
+use crate::iostat::{METRIC_DISK_IO_OPERATION, METRIC_DISK_IO_OPERATION_DURATION, METRIC_ERASURE_ENCODING_DURATION};
 use crate::vfs::calculate_shard_size;
 use crate::vfs::path::{VirtualPath, VP_DEFAULT_FILE_EXT};
 use log::{debug, trace, warn};
@@ -264,7 +262,7 @@ impl VirtualBlock {
     }
 
     /// Read from the VirtualBlock, at the given position, until the buffer is full
-    pub fn read(&self, pos: usize, buf: &mut [u8]) -> Result<usize, ShmrError> {
+    pub fn read(&self, pos: u64, buf: &mut [u8]) -> Result<usize, ShmrError> {
         trace!(
             "[{}:{:#016x}] reading {} bytes at {}",
             self.ino,
@@ -289,7 +287,7 @@ impl VirtualBlock {
             // populate the buffer with the contents of the shard(s)
             self.load_block()?;
         }
-
+        let pos = pos as usize;
         let data = self.buffer.lock().unwrap();
         if data.len() < pos {
             return Err(ShmrError::OutOfSpace);
@@ -473,10 +471,10 @@ impl VirtualBlock {
                     .write(true)
                     .open(&shard_path.0)?,
             ));
+            // gauge!(METRIC_OPEN_FILE_HANDLES, "inode" => self.ino, "block" => self.idx).increment(1);
         }
 
         self.shard_loaded.store(true, Ordering::Relaxed);
-
         Ok(())
     }
 

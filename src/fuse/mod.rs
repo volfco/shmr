@@ -17,6 +17,8 @@ use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::os::unix::prelude::OsStrExt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use metrics::{counter, gauge};
+use crate::iostat::{METRIC_VFS_FUSE_RPC, METRIC_VFS_OPEN_FILE_HANDLES};
 
 #[cfg(target_os = "macos")]
 pub type Mode = u16;
@@ -231,6 +233,8 @@ impl Filesystem for ShmrFs {
             parent,
             name
         );
+        counter!(METRIC_VFS_FUSE_RPC, "method" => "lookup").increment(1);
+
         if name.len() > MAX_NAME_LENGTH as usize {
             reply.error(libc::ENAMETOOLONG);
             return;
@@ -302,6 +306,7 @@ impl Filesystem for ShmrFs {
 
     fn getattr(&mut self, req: &Request<'_>, ino: u64, reply: ReplyAttr) {
         trace!("FUSE({}) 'getattr' invoked for inode {}", req.unique(), ino);
+        counter!(METRIC_VFS_FUSE_RPC, "method" => "getattr").increment(1);
 
         // if !self.check_access(ino, req.uid(), req.gid(), libc::X_OK) {
         //     reply.error(libc::EACCES);
@@ -344,6 +349,7 @@ impl Filesystem for ShmrFs {
         reply: ReplyAttr,
     ) {
         trace!("FUSE({}) 'setattr' invoked on inode {}", req.unique(), ino);
+        counter!(METRIC_VFS_FUSE_RPC, "method" => "setattr").increment(1);
 
         // if !self.check_access(ino, req.uid(), req.gid(), libc::X_OK) {
         //     reply.error(libc::EACCES);
@@ -475,6 +481,7 @@ impl Filesystem for ShmrFs {
             parent,
             name
         );
+        counter!(METRIC_VFS_FUSE_RPC, "method" => "mknod").increment(1);
 
         self.create_entry(req, parent, name, mode, umask, rdev, reply)
     }
@@ -494,6 +501,8 @@ impl Filesystem for ShmrFs {
             parent,
             name
         );
+        counter!(METRIC_VFS_FUSE_RPC, "method" => "mkdir").increment(1);
+
         self.create_entry(req, parent, name, mode | libc::S_IFDIR, umask, 0, reply)
     }
 
@@ -520,6 +529,7 @@ impl Filesystem for ShmrFs {
         reply: ReplyEmpty,
     ) {
         trace!("FUSE({}) 'rename' invoked for parent {} with name {:?} to new parent {} with new name {:?}", req.unique(), parent, name, newparent, newname);
+        counter!(METRIC_VFS_FUSE_RPC, "method" => "rename").increment(1);
 
         if !self.superblock.has(&parent) || !self.superblock.has(&newparent) {
             reply.error(libc::ENOENT);
@@ -595,6 +605,8 @@ impl Filesystem for ShmrFs {
             ino,
             flags
         );
+        counter!(METRIC_VFS_FUSE_RPC, "method" => "open").increment(1);
+        gauge!(METRIC_VFS_OPEN_FILE_HANDLES).decrement(1);
 
         if !self.is_file(ino) {
             warn!("FUSE({}) inode {} is not a RegularFile", req.unique(), ino);
@@ -644,9 +656,7 @@ impl Filesystem for ShmrFs {
             offset,
             size
         );
-
-        assert!(offset >= 0);
-        let offset = offset as u64;
+        counter!(METRIC_VFS_FUSE_RPC, "method" => "read").increment(1);
 
         let inode_entry = self.superblock.get(&ino).unwrap();
         if inode_entry.is_none() {
@@ -659,7 +669,7 @@ impl Filesystem for ShmrFs {
 
         let inode_entry = inode_entry.unwrap();
         if let InodeDescriptor::File(vf) = &inode_entry.inode_descriptor {
-            match vf.read(offset, &mut buffer) {
+            match vf.read(offset as u64, &mut buffer) {
                 Ok(_) => reply.data(&buffer),
                 Err(e) => {
                     error!(
@@ -695,8 +705,7 @@ impl Filesystem for ShmrFs {
             offset,
             data.len()
         );
-
-        let offset = offset as u64;
+        counter!(METRIC_VFS_FUSE_RPC, "method" => "write").increment(1);
 
         let inode_entry = self.superblock.get_mut(&ino).unwrap();
         if inode_entry.is_none() {
@@ -707,7 +716,7 @@ impl Filesystem for ShmrFs {
 
         let mut inode_entry = inode_entry.unwrap();
         if let InodeDescriptor::File(vf) = &mut inode_entry.inode_descriptor {
-            match vf.write(offset, data) {
+            match vf.write(offset as u64, data) {
                 Ok(amt) => {
                     // update the inode
                     inode_entry.inode.size = vf.size;
@@ -736,6 +745,7 @@ impl Filesystem for ShmrFs {
             name,
             parent
         );
+        counter!(METRIC_VFS_FUSE_RPC, "method" => "unlink").increment(1);
 
         let parent_entry = self.superblock.get(&parent).unwrap().unwrap();
         // done this way, so we don't need to hold the WriteGuard for longer than needed. the open file descriptor search
@@ -758,6 +768,8 @@ impl Filesystem for ShmrFs {
             reply.error(libc::ENOENT);
             return;
         };
+
+        drop(parent_entry);
 
         // check if there are any open file handles via scanning the open file handles
         for entries in self.file_handles.iter() {
@@ -791,6 +803,7 @@ impl Filesystem for ShmrFs {
             ino,
             fh
         );
+        counter!(METRIC_VFS_FUSE_RPC, "method" => "flush").increment(1);
 
         {
             let inode_entry = self.superblock.get_mut(&ino).unwrap();
@@ -813,8 +826,6 @@ impl Filesystem for ShmrFs {
                 }
             }
         }
-
-        info!("mark");
 
         if let Err(e) = self.superblock.flush(&ino) {
             error!(
@@ -853,6 +864,8 @@ impl Filesystem for ShmrFs {
             fh,
             flush
         );
+        counter!(METRIC_VFS_FUSE_RPC, "method" => "release").increment(1);
+        gauge!(METRIC_VFS_OPEN_FILE_HANDLES).decrement(1);
 
         if let Err(e) = self.release_fh(fh) {
             error!(
@@ -879,6 +892,7 @@ impl Filesystem for ShmrFs {
             ino,
             datasync
         );
+        counter!(METRIC_VFS_FUSE_RPC, "method" => "fsync").increment(1);
 
         // get the inode
         let inode_entry = self.superblock.get(&ino).unwrap();
@@ -890,6 +904,8 @@ impl Filesystem for ShmrFs {
 
         let inode_entry = inode_entry.unwrap();
         if let InodeDescriptor::File(file) = &inode_entry.inode_descriptor {
+            let file = file.clone();
+            drop(inode_entry);
             if let Err(e) = file.sync_data(!datasync) {
                 warn!(
                     "FUSE({}) Error occurred when attempting to sync inode {}. {:?}",
@@ -920,6 +936,8 @@ impl Filesystem for ShmrFs {
     /// contents of the directory can change between opendir and releasedir.
     fn opendir(&mut self, req: &Request<'_>, ino: u64, _flags: i32, reply: ReplyOpen) {
         debug!("FUSE({}) 'opendir' invoked on inode {}", req.unique(), ino);
+        counter!(METRIC_VFS_FUSE_RPC, "method" => "opendir").increment(1);
+
         // let (access_mask, _read, _write) = match flags & libc::O_ACCMODE {
         //     libc::O_RDONLY => {
         //         // Behavior is undefined, but most filesystems return EACCES
@@ -955,14 +973,13 @@ impl Filesystem for ShmrFs {
         offset: i64,
         mut reply: ReplyDirectory,
     ) {
-        assert!(offset >= 0);
-
         trace!(
             "FUSE({}) 'readdir' invoked for inode {} with offset {}",
             req.unique(),
             ino,
             offset
         );
+        counter!(METRIC_VFS_FUSE_RPC, "method" => "readdir").increment(1);
 
         let binding = self.superblock.get(&ino).unwrap();
         if binding.is_none() {
@@ -997,6 +1014,7 @@ impl Filesystem for ShmrFs {
     }
 
     fn access(&mut self, _req: &Request<'_>, _ino: u64, _mask: i32, reply: ReplyEmpty) {
+        counter!(METRIC_VFS_FUSE_RPC, "method" => "access").increment(1);
         reply.ok()
     }
 }

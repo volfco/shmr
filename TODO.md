@@ -13,12 +13,29 @@
       - [ ] GetTombstones
     - Properties
     - Signals
+- Metrics
+  - metrics-rs to OpenTelemetry gRPC thingie
+  - metrics-rs in memory query engine
+    - specify collect interval for metrics-rs to thingie sweep
+    - specify upstream flush interval. Like 1s
+    - specify retention intervals. So if there are 30 1s intervals, there is a 30 element ring buffer holding the values
+    - specify high resolution retention intervals. If set to 5, will keep full set of metric data for the given intervals. This value defaults to 1
+    - Interface to query for data. This is looking for the average value of disk_io_operation_duration for the abc pool
+      over the last 30 flush intervals. This will always include the current interval in its calculations
+      
+      ```rust
+        let res = MetricDb.get("disk_io_operation_duration", filters=[
+            MetricSelector::Match("pool", "abc")
+        ]).avg(30);
+      ``` 
+    - 
 - Background Processes
   - Memory Size Monitor Thing
     - Track used memory for file cache, and evict according to Io policy
 - Implement a `WorkerTask` Manager to view status of running tasks
 - Writes don't hit the cache if the cache is empty?
-- shmr cli tool
+- Have shmrd spawn the fuse server in a seperate thread, and then isolate that thread to the same CPU core as the fuse 
+  kernel thread is running on, then prevent other processes from using it
 - shmr_crond daemon. runs housekeeping tasks and stuff via dbus calls
   - tombstone cleanup !!!
 - File Compression

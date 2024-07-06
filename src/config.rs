@@ -30,6 +30,12 @@ pub struct ShmrFsConfig {
     pub write_pool: String,
 
     pub block_size: ByteSize,
+
+    /// Prometheus Remote Write Endpoint. "http://127.0.0.1:9091/metrics/job/example"
+    pub prometheus_endpoint: Option<String>,
+
+    pub prometheus_username: Option<String>,
+    pub prometheus_password: Option<String>,
 }
 impl ShmrFsConfig {
     pub fn has_pool(&self, pool: &str) -> bool {
