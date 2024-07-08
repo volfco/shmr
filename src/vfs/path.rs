@@ -6,6 +6,7 @@ use std::fs::OpenOptions;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tracing::debug;
 
 #[allow(clippy::identity_op)]
 pub const VIRTUAL_BLOCK_DEFAULT_SIZE: u64 = 1024 * 1024 * 1;
@@ -51,7 +52,8 @@ impl VirtualPath {
         let full_path = self.resolve(map)?;
 
         // ensure the directory exists
-        if !full_path.1.exists() {
+        debug!("checking if path exists");
+        if !full_path.1.try_exists()? {
             trace!("creating directory: {:?}", &full_path.1);
             std::fs::create_dir_all(&full_path.1)?;
         }

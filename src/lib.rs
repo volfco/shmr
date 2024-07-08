@@ -47,7 +47,10 @@ impl ShmrFs {
         };
 
         // TODO Make the Number of Threads dynamic
-        rayon::ThreadPoolBuilder::new().num_threads(8).build_global().unwrap();
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(8)
+            .build_global()
+            .unwrap();
 
         let dbus_shmr = shmr.clone();
         std::thread::spawn(move || dbus::dbus_server(dbus_shmr));
@@ -117,6 +120,9 @@ pub mod tests {
             pools,
             write_pool: "test_pool".to_string(),
             block_size: ByteSize(1024 * 1024),
+            prometheus_endpoint: None,
+            prometheus_username: None,
+            prometheus_password: None,
         }
     }
 }

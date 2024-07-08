@@ -1,7 +1,3 @@
-use crate::tasks::{WorkerTask, WorkerThread};
-use log::{debug, error, info, trace, warn};
-use parking_lot::{ArcRwLockReadGuard, ArcRwLockWriteGuard, RawRwLock, RwLock};
-use serde::{de::DeserializeOwned, Serialize};
 use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::fs::OpenOptions;
@@ -9,6 +5,12 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
+
+use log::{debug, error, info, trace, warn};
+use parking_lot::{ArcRwLockReadGuard, ArcRwLockWriteGuard, RawRwLock, RwLock};
+use serde::{de::DeserializeOwned, Serialize};
+
+use crate::tasks::{WorkerTask, WorkerThread};
 
 pub const ZSTD_COMPRESSION_DEFAULT: i32 = 5;
 
@@ -459,9 +461,6 @@ impl<
 
 #[cfg(test)]
 mod tests {
-    use crate::databunny::DataBunny;
-    use std::collections::HashMap;
-
     // #[test]
     // fn test_data_bunny() {
     //     use std::path::PathBuf;

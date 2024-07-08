@@ -4,6 +4,7 @@ pub mod types;
 
 use crate::fuse::magics::*;
 use crate::fuse::types::IFileType;
+use crate::iostat::{METRIC_VFS_FUSE_RPC, METRIC_VFS_OPEN_FILE_HANDLES};
 use crate::types::{Inode, InodeDescriptor, SuperblockEntry};
 use crate::vfs::VirtualFile;
 use crate::{ShmrFs, VFS_DEFAULT_BLOCK_SIZE};
@@ -13,18 +14,23 @@ use fuser::{
 };
 use libc::c_int;
 use log::{debug, error, info, trace, warn};
+use metrics::{counter, gauge};
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::os::unix::prelude::OsStrExt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use metrics::{counter, gauge};
-use crate::iostat::{METRIC_VFS_FUSE_RPC, METRIC_VFS_OPEN_FILE_HANDLES};
 
 #[cfg(target_os = "macos")]
 pub type Mode = u16;
 
 #[cfg(not(target_os = "macos"))]
 pub type Mode = u32;
+
+macro_rules! log_line {
+    ($msg:expr) => {
+        debug!("{} (called in {}:{})", $msg, file!(), line!());
+    };
+}
 
 impl ShmrFs {
     fn is_file(&self, ino: u64) -> bool {
@@ -60,15 +66,14 @@ impl ShmrFs {
         rdev: u32,
         reply: ReplyEntry,
     ) {
-        // TODO implement whatever mode 755 is
         let file_type = mode as Mode & libc::S_IFMT;
         if file_type != libc::S_IFREG && file_type != libc::S_IFLNK && file_type != libc::S_IFDIR {
-            // TODO
             warn!("ShmrFs::create_entry() implementation is incomplete. Only supports regular files and directories. Got {:o}", mode);
             reply.error(libc::ENOSYS);
             return;
         }
 
+        log_line!("entry");
         let mut parent_entry = match self.superblock.get_mut(&parent) {
             Err(err) => {
                 error!(
@@ -506,6 +511,65 @@ impl Filesystem for ShmrFs {
         self.create_entry(req, parent, name, mode | libc::S_IFDIR, umask, 0, reply)
     }
 
+    fn unlink(&mut self, req: &Request<'_>, parent: u64, name: &OsStr, reply: ReplyEmpty) {
+        trace!(
+            "FUSE({}) 'unlink' invoked. removing '{:?}' from {}",
+            req.unique(),
+            name,
+            parent
+        );
+        counter!(METRIC_VFS_FUSE_RPC, "method" => "unlink").increment(1);
+
+        let parent_entry = self.superblock.get(&parent).unwrap().unwrap();
+        // done this way, so we don't need to hold the WriteGuard for longer than needed. the open file descriptor search
+        // could take a bit of time if there are a lot of open handles
+        let inode = if let InodeDescriptor::Directory(contents) = &parent_entry.inode_descriptor {
+            let ino = contents.get(&name.as_bytes().to_vec());
+            if ino.is_none() {
+                info!(
+                    "FUSE({}) Inode {:?} does not have an entry for '{:?}'",
+                    req.unique(),
+                    &parent,
+                    &name
+                );
+                reply.error(libc::ENOENT);
+                return;
+            }
+            let inode = ino.unwrap();
+            *inode
+        } else {
+            reply.error(libc::ENOENT);
+            return;
+        };
+
+        drop(parent_entry);
+
+        // check if there are any open file handles via scanning the open file handles
+        for entries in self.file_handles.iter() {
+            if inode == *entries.value() {
+                debug!("Can't delete inode {}. has open filehandles", inode);
+                reply.error(libc::EBUSY);
+                return;
+            }
+        }
+
+        // delete the entry from the parent directory and tombstone the inode
+        log_line!("entry");
+        let mut parent_entry = self.superblock.get_mut(&parent).unwrap().unwrap();
+        if let InodeDescriptor::Directory(contents) = &mut parent_entry.inode_descriptor {
+            let _ = contents
+                .remove(&name.as_bytes().to_vec())
+                .expect("directory entry disappeared");
+        } else {
+            reply.error(libc::ENOENT);
+            return;
+        }
+        parent_entry.tombstone = true;
+
+        debug!("FUSE({}) toombstoned inode {}", req.unique(), inode);
+        reply.ok();
+    }
+
     /// Rename a directory entry, possibly moving the entry from one inode to another.
     ///
     /// Process:
@@ -555,6 +619,7 @@ impl Filesystem for ShmrFs {
                 contents.insert(newname.as_bytes().to_vec(), ino.unwrap());
             }
         } else {
+            warn!("if this works, holy fuck");
             let mut old_parent = self.superblock.get_mut(&parent).unwrap().unwrap();
             let mut new_parent = self.superblock.get_mut(&newparent).unwrap().unwrap();
 
@@ -707,6 +772,7 @@ impl Filesystem for ShmrFs {
         );
         counter!(METRIC_VFS_FUSE_RPC, "method" => "write").increment(1);
 
+        log_line!("entry");
         let inode_entry = self.superblock.get_mut(&ino).unwrap();
         if inode_entry.is_none() {
             warn!("FUSE({}) Unable to perform read operation. Inode does not exist or has not been opened", req.unique());
@@ -722,6 +788,7 @@ impl Filesystem for ShmrFs {
                     inode_entry.inode.size = vf.size;
                     inode_entry.inode.update_metadata(0);
 
+                    drop(inode_entry);
                     reply.written(amt as u32)
                 }
                 Err(e) => {
@@ -730,70 +797,13 @@ impl Filesystem for ShmrFs {
                         req.unique(),
                         e
                     );
+                    drop(inode_entry);
                     reply.error(libc::EIO)
                 }
             }
         } else {
             panic!("attempted to write to non-file inode")
         }
-    }
-
-    fn unlink(&mut self, req: &Request<'_>, parent: u64, name: &OsStr, reply: ReplyEmpty) {
-        trace!(
-            "FUSE({}) 'unlink' invoked. removing '{:?}' from {}",
-            req.unique(),
-            name,
-            parent
-        );
-        counter!(METRIC_VFS_FUSE_RPC, "method" => "unlink").increment(1);
-
-        let parent_entry = self.superblock.get(&parent).unwrap().unwrap();
-        // done this way, so we don't need to hold the WriteGuard for longer than needed. the open file descriptor search
-        // could take a bit of time if there are a lot of open handles
-        let inode = if let InodeDescriptor::Directory(contents) = &parent_entry.inode_descriptor {
-            let ino = contents.get(&name.as_bytes().to_vec());
-            if ino.is_none() {
-                info!(
-                    "FUSE({}) Inode {:?} does not have an entry for '{:?}'",
-                    req.unique(),
-                    &parent,
-                    &name
-                );
-                reply.error(libc::ENOENT);
-                return;
-            }
-            let inode = ino.unwrap();
-            *inode
-        } else {
-            reply.error(libc::ENOENT);
-            return;
-        };
-
-        drop(parent_entry);
-
-        // check if there are any open file handles via scanning the open file handles
-        for entries in self.file_handles.iter() {
-            if inode == *entries.value() {
-                debug!("Can't delete inode {}. has open filehandles", inode);
-                reply.error(libc::EBUSY);
-                return;
-            }
-        }
-
-        // delete the entry from the parent directory and tombstone the inode
-        let mut parent_entry = self.superblock.get_mut(&parent).unwrap().unwrap();
-        if let InodeDescriptor::Directory(contents) = &mut parent_entry.inode_descriptor {
-            let _ = contents
-                .remove(&name.as_bytes().to_vec())
-                .expect("directory entry disappeared");
-        } else {
-            reply.error(libc::ENOENT);
-            return;
-        }
-        parent_entry.tombstone = true;
-
-        debug!("FUSE({}) toombstoned inode {}", req.unique(), inode);
-        reply.ok();
     }
 
     fn flush(&mut self, req: &Request<'_>, ino: u64, fh: u64, _lock_owner: u64, reply: ReplyEmpty) {
@@ -806,6 +816,7 @@ impl Filesystem for ShmrFs {
         counter!(METRIC_VFS_FUSE_RPC, "method" => "flush").increment(1);
 
         {
+            log_line!("entry");
             let inode_entry = self.superblock.get_mut(&ino).unwrap();
             if inode_entry.is_none() {
                 warn!("FUSE({}) Unable to perform read operation. Inode does not exist or has not been opened", req.unique());

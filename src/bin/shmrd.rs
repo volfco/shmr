@@ -1,13 +1,13 @@
 use clap::Parser;
 use fuser::MountOption;
 use log::{error, info, LevelFilter};
+use metrics_exporter_prometheus::PrometheusBuilder;
+use metrics_util::MetricKindMask;
 use shmr2::config::ShmrFsConfig;
 use shmr2::ShmrFs;
 use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::time::Duration;
-use metrics_exporter_prometheus::PrometheusBuilder;
-use metrics_util::MetricKindMask;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -40,24 +40,23 @@ fn main() {
     let config = std::fs::read_to_string(&args.config).expect("could not read config file");
     let config: ShmrFsConfig = serde_yaml::from_str(&config).expect("could not parse config file");
 
-    if let Some(endpoint) = &config.prometheus_endpoint {
-        PrometheusBuilder::new()
-            .with_push_gateway(
-                endpoint,
-                Duration::from_secs(1),
-                config.prometheus_username.clone(),
-                config.prometheus_password.clone(),
-            )
-            .expect("push gateway endpoint should be valid")
-            .idle_timeout(
-                MetricKindMask::COUNTER | MetricKindMask::HISTOGRAM,
-                Some(Duration::from_secs(30)),
-            )
-            .install()
-            .expect("failed to install Prometheus recorder");
-        info!("prometheus connected");
-    }
-
+    // if let Some(endpoint) = &config.prometheus_endpoint {
+    //     PrometheusBuilder::new()
+    //         .with_push_gateway(
+    //             endpoint,
+    //             Duration::from_secs(1),
+    //             config.prometheus_username.clone(),
+    //             config.prometheus_password.clone(),
+    //         )
+    //         .expect("push gateway endpoint should be valid")
+    //         .idle_timeout(
+    //             MetricKindMask::COUNTER | MetricKindMask::HISTOGRAM,
+    //             Some(Duration::from_secs(30)),
+    //         )
+    //         .install()
+    //         .expect("failed to install Prometheus recorder");
+    //     info!("prometheus connected");
+    // }
 
     let options = vec![MountOption::FSName("fuser".to_string())];
 

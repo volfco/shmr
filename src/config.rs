@@ -123,7 +123,7 @@ pub struct Bucket {
     pub priority: BucketPriority,
 }
 impl Bucket {
-    /// Given a list of [`sysinfo::Disks`], update this Bucket
+    /// Given a list of [`Disks`], update this Bucket
     pub fn update(&mut self, disks: &Disks) {
         for disk in disks.list() {
             if disk.mount_point() == self.path.as_path() {

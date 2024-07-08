@@ -1,8 +1,8 @@
 // Metric Collection Workers
 
 use crate::config::ShmrFsConfig;
-use crate::tasks::WorkerTask;
 use crate::databunny::DataBunny;
+use crate::tasks::WorkerTask;
 use crate::types::SuperblockEntry;
 
 #[allow(dead_code)]
@@ -13,9 +13,5 @@ pub struct MetricCollector {
 }
 
 impl WorkerTask for MetricCollector {
-    fn execute(&self) {
-
-
-    }
+    fn execute(&self) {}
 }
-

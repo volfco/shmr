@@ -1,6 +1,8 @@
 #![allow(clippy::needless_borrow)]
 use crate::config::{ShmrError, ShmrFsConfig};
-use crate::iostat::{METRIC_DISK_IO_OPERATION, METRIC_DISK_IO_OPERATION_DURATION, METRIC_ERASURE_ENCODING_DURATION};
+use crate::iostat::{
+    METRIC_DISK_IO_OPERATION, METRIC_DISK_IO_OPERATION_DURATION, METRIC_ERASURE_ENCODING_DURATION,
+};
 use crate::vfs::calculate_shard_size;
 use crate::vfs::path::{VirtualPath, VP_DEFAULT_FILE_EXT};
 use log::{debug, trace, warn};
@@ -246,6 +248,8 @@ impl VirtualBlock {
             shards.push(vpf);
         }
 
+        trace!("[{}:{:#016x}] VirtualBlock successfully created", ino, idx);
+
         Ok(Self {
             ino,
             idx,
@@ -326,6 +330,11 @@ impl VirtualBlock {
 
         // update the buffer
         {
+            trace!(
+                "[{}:{:#016x}] locking buffer for update",
+                self.ino,
+                self.idx,
+            );
             let mut buffer = self.buffer.lock().unwrap();
 
             // there are instances when the buffer has not been initialized, and we need to resize it.
@@ -339,6 +348,11 @@ impl VirtualBlock {
             }
 
             buffer[(pos as usize)..ending_pos].copy_from_slice(buf);
+            trace!(
+                "[{}:{:#016x}] update completed",
+                self.ino,
+                self.idx,
+            );
         }
 
         // if !self.buffered.load(Ordering::Relaxed) {

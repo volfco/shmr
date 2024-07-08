@@ -6,12 +6,12 @@ use crate::vfs::block::{BlockTopology, VirtualBlock};
 use crate::vfs::path::VIRTUAL_BLOCK_DEFAULT_SIZE;
 use crate::{ShmrError, VFS_DEFAULT_BLOCK_SIZE};
 use log::{debug, trace, warn};
+use metrics::{counter, histogram};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Instant;
 use std::{cmp, mem};
-use metrics::{counter, histogram};
 
 fn calculate_shard_size(length: u64, data_shards: u8) -> usize {
     (length as f32 / data_shards as f32).ceil() as usize
@@ -139,7 +139,8 @@ impl VirtualFile {
             // because it has not been populated, we can assume that the underlying Blocks have not been as well
             panic!("pool_map has not been populated. Unable to perform operation.")
         };
-        counter!(METRIC_VFS_IO_OPERATION, "operation" => "read", "inode" => self.ino.to_string()).increment(1);
+        counter!(METRIC_VFS_IO_OPERATION, "operation" => "read", "inode" => self.ino.to_string())
+            .increment(1);
         let histogram = histogram!(METRIC_VFS_IO_OPERATION_DURATION, "operation" => "read", "inode" => self.ino.to_string());
         let start = Instant::now();
 
@@ -183,7 +184,9 @@ impl VirtualFile {
             // because it has not been populated, we can assume that the underlying Blocks have not been as well
             panic!("pool_map has not been populated. Unable to perform operation.")
         };
-        counter!(METRIC_VFS_IO_OPERATION, "operation" => "write", "inode" => self.ino.to_string()).increment(1);
+
+        counter!(METRIC_VFS_IO_OPERATION, "operation" => "write", "inode" => self.ino.to_string())
+            .increment(1);
         let histogram = histogram!(METRIC_VFS_IO_OPERATION_DURATION, "operation" => "write", "inode" => self.ino.to_string());
         let start = Instant::now();
 
@@ -206,6 +209,10 @@ impl VirtualFile {
         for chunk_idx in start_chunk..=end_chunk {
             // allocate blocks until we have enough blocks for this chunk
             while (self.blocks.len() as u64 * chk_per_blk) <= chunk_idx {
+                debug!(
+                    "{}] requested write block is past allocated range. allocating new block",
+                    self.ino
+                );
                 self.allocate_block()?;
             }
 
@@ -215,7 +222,8 @@ impl VirtualFile {
             let buf_end = cmp::min(written as u64 + self.chunk_size, buf_len) as usize;
 
             trace!(
-                "writing {} bytes to chunk {} (mapping to block_idx:{} / block_pos:{})",
+                "{}] writing {} bytes to chunk {} (mapped to block_idx:{} / block_pos:{})",
+                self.ino,
                 buf_end - written,
                 chunk_idx,
                 block_idx,
@@ -303,6 +311,9 @@ mod tests {
                 pools,
                 write_pool: "test_pool".to_string(),
                 block_size: ByteSize(1024 * 1024),
+                prometheus_endpoint: None,
+                prometheus_username: None,
+                prometheus_password: None,
             })),
             io_stat: IOTracker::default(),
         }
