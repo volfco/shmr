@@ -1,4 +1,5 @@
-use metrics::{describe_counter, describe_gauge, describe_histogram, Histogram};
+use std::collections::BTreeMap;
+use metrics::{Counter, describe_counter, describe_gauge, describe_histogram, Gauge, Histogram, Key, KeyName, Metadata, Recorder, SharedString, Unit};
 use std::mem;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -103,4 +104,47 @@ pub fn describe_metrics() {
         METRIC_ERASURE_ENCODING_DURATION,
         "Erasure Encoding Duration"
     );
+}
+
+pub struct MetricTracker {
+    entries: BTreeMap<Key, MetricType>
+}
+impl Recorder for MetricTracker {
+    fn describe_counter(&self, key: KeyName, unit: Option<Unit>, description: SharedString) {
+        todo!()
+    }
+
+    fn describe_gauge(&self, key: KeyName, unit: Option<Unit>, description: SharedString) {
+        todo!()
+    }
+
+    fn describe_histogram(&self, key: KeyName, unit: Option<Unit>, description: SharedString) {
+        todo!()
+    }
+
+    fn register_counter(&self, key: &Key, metadata: &Metadata<'_>) -> Counter {
+        todo!()
+    }
+
+    fn register_gauge(&self, key: &Key, metadata: &Metadata<'_>) -> Gauge {
+        todo!()
+    }
+
+    fn register_histogram(&self, key: &Key, metadata: &Metadata<'_>) -> Histogram {
+        todo!()
+    }
+}
+pub enum MetricType {
+    Counter(u64),
+    Gauge(f64),
+    Histogram(Vec<f64>)
+}
+impl MetricType {
+    pub fn reset(&mut self) {
+        match self {
+            MetricType::Counter(counter) => *counter = 0,
+            MetricType::Gauge(gauge) => *gauge = 0.0,
+            MetricType::Histogram(histogram) => histogram.clear(),
+        }
+    }
 }

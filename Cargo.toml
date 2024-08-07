@@ -29,14 +29,15 @@ bytesize = { version = "1.3", features = ["serde"]}
 zstd = "0.13"
 parking_lot = { version = "0.12.3", features = ["hardware-lock-elision", "arc_lock"]}
 base64 = "0.22.1"
-
+sled = { version = "1.0.0-alpha" }
 dbus = "0.9"
 dbus-codegen = "0.11"
 dbus-crossroads = "0.5"
-futures = { version = "0.3.30", features = ["thread-pool"] }
 get-size = { version = "^0.1", features = ["derive"] }
 metrics = "0.23"
 metrics-util = "0.17"
 metrics-exporter-prometheus = {  version = "0.15", features = ["push-gateway"] }
 rayon = "1.10"
 tracing = "0.1"
+walkdir = "2.5.0"
+ring = "0.17.8"

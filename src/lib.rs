@@ -46,11 +46,11 @@ impl ShmrFs {
             file_handles: Arc::new(Default::default()),
         };
 
-        // TODO Make the Number of Threads dynamic
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(8)
-            .build_global()
-            .unwrap();
+        // // TODO Make the Number of Threads dynamic
+        // rayon::ThreadPoolBuilder::new()
+        //     .num_threads(8)
+        //     .build_global()
+        //     .unwrap();
 
         let dbus_shmr = shmr.clone();
         std::thread::spawn(move || dbus::dbus_server(dbus_shmr));

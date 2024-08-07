@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use log::{debug, error, info, trace, warn};
@@ -204,6 +204,60 @@ impl StorageBackend for FilePerKey {
     }
 }
 
+// u16 is the disk id
+// u64 is the odi (on disk inode)
+
+#[derive(Clone, Debug)]
+pub struct SledBackend {
+    db: Arc<Mutex<sled::Db>>,
+    compression_method: CompressionMethod
+}
+impl SledBackend {
+    fn ready_contents(&self, buf: Vec<u8>) -> Result<Vec<u8>, BunnyError> {
+        Ok(match self.compression_method {
+            CompressionMethod::None => buf,
+            CompressionMethod::Zstd(_) => {
+                let start = Instant::now();
+                let v = zstd::stream::decode_all(&*buf)?;
+                trace!("took {:?} to decompress entry", start.elapsed());
+                v
+            }
+        })
+    }
+}
+impl StorageBackend for SledBackend {
+    fn load(&self, key: &[u8]) -> Result<Option<Vec<u8>>, BunnyError> {
+        let db = self.db.lock().unwrap();
+        Ok(db.get(key)?.map(|v| self.ready_contents(v.to_vec()).unwrap()))
+    }
+
+    fn load_all(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>, BunnyError> {
+        let db = self.db.lock().unwrap();
+        let mut elements = vec![];
+        for el in db.iter() {
+            let (key, value) = el?;
+            elements.push((key.to_vec(), self.ready_contents(value.to_vec())?))
+        }
+
+        Ok(elements)
+    }
+
+    fn save(&self, key: Vec<u8>, val: Vec<u8>) -> Result<(), BunnyError> {
+        let val = match self.compression_method {
+            CompressionMethod::None => val,
+            CompressionMethod::Zstd(level) => {
+                let start = Instant::now();
+                let v = zstd::bulk::compress(&val, level)?;
+                trace!("took {:?} to compress entry", start.elapsed());
+                v
+            }
+        };
+        let db = self.db.lock().unwrap();
+        let _ = db.insert(key, val)?;
+        Ok(())
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug)]
 pub enum BunnyError {
@@ -240,10 +294,11 @@ impl<
         V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
     > DataBunny<K, V>
 {
-    pub fn open(path: &Path, compression: CompressionMethod) -> Result<Self, BunnyError> {
-        let sb = FilePerKey {
-            compression,
-            base_dir: path.to_path_buf(),
+    pub fn open(path: &Path, compression_method: CompressionMethod) -> Result<Self, BunnyError> {
+        let db_name = path.join("superblock.sled");
+        let sb = SledBackend {
+            compression_method,
+            db: Arc::new(Mutex::new(sled::open(db_name)?)),
         };
 
         let mut entries_tree: BTreeMap<K, Arc<RwLock<V>>> = BTreeMap::new();

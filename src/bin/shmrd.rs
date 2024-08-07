@@ -1,13 +1,10 @@
 use clap::Parser;
 use fuser::MountOption;
-use log::{error, info, LevelFilter};
-use metrics_exporter_prometheus::PrometheusBuilder;
-use metrics_util::MetricKindMask;
+use log::{error, LevelFilter};
 use shmr2::config::ShmrFsConfig;
 use shmr2::ShmrFs;
 use std::io::ErrorKind;
 use std::path::PathBuf;
-use std::time::Duration;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -19,22 +16,26 @@ struct Args {
     config: PathBuf,
 }
 
-fn main() {
-    let args = Args::parse();
-
-    let log_level = match args.verbosity {
+fn log_level_from_num(level: u8) -> LevelFilter {
+    match level {
         0 => LevelFilter::Error,
         1 => LevelFilter::Warn,
         2 => LevelFilter::Info,
         3 => LevelFilter::Debug,
         _ => LevelFilter::Trace,
-    };
+    }
+}
+
+fn main() {
+    let args = Args::parse();
+
     env_logger::builder()
         .format_timestamp_nanos()
-        .filter(Some("shmr"), log_level)
-        .filter(Some("fuser"), log_level)
-        .filter(Some("dbus"), log_level)
-        .filter_level(log_level)
+        .filter(Some("shmr"), log_level_from_num(args.verbosity))
+        .filter(Some("fuser"), log_level_from_num(args.verbosity))
+        .filter(Some("dbus"), log_level_from_num(args.verbosity))
+        .filter(Some("sled"), log_level_from_num(args.verbosity - 1))
+        .filter_level(log_level_from_num(args.verbosity))
         .init();
 
     let config = std::fs::read_to_string(&args.config).expect("could not read config file");

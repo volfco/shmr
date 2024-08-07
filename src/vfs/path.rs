@@ -13,6 +13,10 @@ pub const VIRTUAL_BLOCK_DEFAULT_SIZE: u64 = 1024 * 1024 * 1;
 
 pub const VP_DEFAULT_FILE_EXT: &str = "bin";
 
+
+// TODO Refactor so that
+// VirtualPath::pool -> u8
+// VirtualPath::bucket -> u16
 #[derive(Serialize, Deserialize, Ord, PartialOrd, Debug, Clone, Eq, PartialEq)]
 pub struct VirtualPath {
     /// Drive Pool
