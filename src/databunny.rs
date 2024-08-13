@@ -46,6 +46,7 @@ pub trait StorageBackend: Debug + Send + Sync {
     fn load(&self, key: &[u8]) -> Result<Option<Vec<u8>>, BunnyError>;
 
     /// Return a Vector of all (Key, Value) pairs on disk
+    #[allow(clippy::type_complexity)]
     fn load_all(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>, BunnyError>;
 
     /// Write the given key,value pair to disk.
@@ -210,25 +211,11 @@ impl StorageBackend for FilePerKey {
 #[derive(Clone, Debug)]
 pub struct SledBackend {
     db: Arc<Mutex<sled::Db>>,
-    compression_method: CompressionMethod
-}
-impl SledBackend {
-    fn ready_contents(&self, buf: Vec<u8>) -> Result<Vec<u8>, BunnyError> {
-        Ok(match self.compression_method {
-            CompressionMethod::None => buf,
-            CompressionMethod::Zstd(_) => {
-                let start = Instant::now();
-                let v = zstd::stream::decode_all(&*buf)?;
-                trace!("took {:?} to decompress entry", start.elapsed());
-                v
-            }
-        })
-    }
 }
 impl StorageBackend for SledBackend {
     fn load(&self, key: &[u8]) -> Result<Option<Vec<u8>>, BunnyError> {
         let db = self.db.lock().unwrap();
-        Ok(db.get(key)?.map(|v| self.ready_contents(v.to_vec()).unwrap()))
+        Ok(db.get(key)?.map(|v| v.to_vec()))
     }
 
     fn load_all(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>, BunnyError> {
@@ -236,22 +223,13 @@ impl StorageBackend for SledBackend {
         let mut elements = vec![];
         for el in db.iter() {
             let (key, value) = el?;
-            elements.push((key.to_vec(), self.ready_contents(value.to_vec())?))
+            elements.push((key.to_vec(), value.to_vec()))
         }
 
         Ok(elements)
     }
 
     fn save(&self, key: Vec<u8>, val: Vec<u8>) -> Result<(), BunnyError> {
-        let val = match self.compression_method {
-            CompressionMethod::None => val,
-            CompressionMethod::Zstd(level) => {
-                let start = Instant::now();
-                let v = zstd::bulk::compress(&val, level)?;
-                trace!("took {:?} to compress entry", start.elapsed());
-                v
-            }
-        };
         let db = self.db.lock().unwrap();
         let _ = db.insert(key, val)?;
         Ok(())
@@ -294,10 +272,9 @@ impl<
         V: Serialize + DeserializeOwned + Clone + Send + Sync + 'static,
     > DataBunny<K, V>
 {
-    pub fn open(path: &Path, compression_method: CompressionMethod) -> Result<Self, BunnyError> {
+    pub fn open(path: &Path) -> Result<Self, BunnyError> {
         let db_name = path.join("superblock.sled");
         let sb = SledBackend {
-            compression_method,
             db: Arc::new(Mutex::new(sled::open(db_name)?)),
         };
 
@@ -364,9 +341,11 @@ impl<
         &self,
         key: &K,
     ) -> Result<Option<ArcRwLockWriteGuard<RawRwLock, V>>, BunnyError> {
+        info!("getting read handle. locked = {}. exclusive = {}", self.entries.is_locked(), self.entries.is_locked_exclusive());
         let entry_handle = self.entries.read();
 
         if let Some(entry) = entry_handle.get(key) {
+            trace!("entry found in memory");
             let entry_copy = entry.clone();
             drop(entry_handle);
 
@@ -380,7 +359,7 @@ impl<
             return Ok(Some(write_arc));
         }
         drop(entry_handle);
-
+        debug!("entry not found in memory. loading from datastore");
         if let Some(record) = self.storage_backend.load(key.to_string().as_bytes())? {
             self.insert(key.clone(), self.decode_entry(record)?)?;
 

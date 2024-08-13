@@ -1,6 +1,7 @@
-- ~~unlink (rename) function~~
-- ~~Parallelize `flush` so all blocks in a VirtualFile flush in parallel~~
-- add warning statements around get_mut and other write locks
+- [ ] add warning statements around get_mut and other write locks
+- idea: to improve read performance, we can have a read-ahead cache. This will read ahead a certain number of blocks
+  and store them in the cache. This will improve read performance for sequential reads.
+  - 
 - dbus implementations
   - Methods
     - co.volf.shmr.ShmrFs1

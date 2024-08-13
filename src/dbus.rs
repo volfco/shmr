@@ -43,7 +43,7 @@ pub fn dbus_server(shmr_fs: ShmrFs) -> Result<(), dbus::Error> {
                         //         todo!()
                         //     }).unwrap()
                         // }
-                        todo!()
+                        // todo!()
                     },
                     _ => {
                         error!("dbus::{}] Inode {} is not a Regular File", ctx.method(), &inode);

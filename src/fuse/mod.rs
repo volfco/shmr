@@ -309,7 +309,7 @@ impl Filesystem for ShmrFs {
         }
     }
 
-    fn getattr(&mut self, req: &Request<'_>, ino: u64, reply: ReplyAttr) {
+    fn getattr(&mut self, req: &Request<'_>, ino: u64, _fh: Option<u64>, reply: ReplyAttr) {
         trace!("FUSE({}) 'getattr' invoked for inode {}", req.unique(), ino);
         counter!(METRIC_VFS_FUSE_RPC, "method" => "getattr").increment(1);
 

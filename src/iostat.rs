@@ -1,16 +1,15 @@
-use std::collections::BTreeMap;
-use metrics::{Counter, describe_counter, describe_gauge, describe_histogram, Gauge, Histogram, Key, KeyName, Metadata, Recorder, SharedString, Unit};
+// use metrics::{describe_counter, describe_gauge, describe_histogram, Histogram};
 use std::mem;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 pub const METRIC_VFS_FUSE_RPC: &str = "vfs_fuse_rpc";
-pub const METRIC_VFS_FUSE_RPC_DURATION: &str = "vfs_fuse_rpc_duration";
-pub const METRIC_VFS_OPEN_INODES: &str = "vfs_open_inodes";
-pub const METRIC_VFS_SUPERBLOCK_MEM_SIZE: &str = "vfs_superblock_memory_size";
-pub const METRIC_VFS_SUPERBLOCK_ENTRIES: &str = "vfs_superblock_entries";
-pub const METRIC_VFS_INODE_MEM_SIZE: &str = "vfs_inode_memory_size";
+// pub const METRIC_VFS_FUSE_RPC_DURATION: &str = "vfs_fuse_rpc_duration";
+// pub const METRIC_VFS_OPEN_INODES: &str = "vfs_open_inodes";
+// pub const METRIC_VFS_SUPERBLOCK_MEM_SIZE: &str = "vfs_superblock_memory_size";
+// pub const METRIC_VFS_SUPERBLOCK_ENTRIES: &str = "vfs_superblock_entries";
+// pub const METRIC_VFS_INODE_MEM_SIZE: &str = "vfs_inode_memory_size";
 
 /// Number of File Handles opened for Inodes in the Virtual Filesystem
 pub const METRIC_VFS_OPEN_FILE_HANDLES: &str = "vfs_open_file_handles";
@@ -19,19 +18,19 @@ pub const METRIC_VFS_IO_OPERATION_DURATION: &str = "vfs_io_operation_duration";
 
 // pub const METRIC_OPEN_FILE_HANDLES: &str = "open_file_handles";
 
-pub const METRIC_DISK_USAGE: &str = "disk_usage";
+// pub const METRIC_DISK_USAGE: &str = "disk_usage";
 pub const METRIC_DISK_IO_OPERATION: &str = "disk_io_operation";
 pub const METRIC_DISK_IO_OPERATION_DURATION: &str = "disk_io_operation_duration";
 pub const METRIC_ERASURE_ENCODING_DURATION: &str = "erasure_encode_duration";
 
 // Task Manager Metrics
 // TODO Eventually move these into tasks/mod.rs or metrics.rs
-pub const METRIC_TASKMGR_STATUS: &str = "taskmgr_status";
-pub const METRIC_TASKMGR_LOOP_DURATION: &str = "taskmgr_loop_duration";
-pub const METRIC_TASKMGR_LOOP_RESULT: &str = "taskmgr_loop_result";
+// pub const METRIC_TASKMGR_STATUS: &str = "taskmgr_status";
+// pub const METRIC_TASKMGR_LOOP_DURATION: &str = "taskmgr_loop_duration";
+// pub const METRIC_TASKMGR_LOOP_RESULT: &str = "taskmgr_loop_result";
 
 /// Measures how often the Rayon ThreadPool is busy when checked
-pub const METRIC_RAYON_THREADPOOL_BUSY: &str = "rayon_threadpool_busy";
+// pub const METRIC_RAYON_THREADPOOL_BUSY: &str = "rayon_threadpool_busy";
 // pub const METRIC_ :&str = "";
 // pub const METRIC_ :&str = "";
 // pub const METRIC_ :&str = "";
@@ -83,68 +82,68 @@ impl IOTracker {
     }
 }
 
-pub fn measure(histogram: Histogram, f: fn()) {
-    let start = Instant::now();
-    f();
-    let duration = start.elapsed();
+// pub fn measure(histogram: Histogram, f: fn()) {
+//     let start = Instant::now();
+//     f();
+//     let duration = start.elapsed();
+//
+//     histogram.record(duration.as_micros() as f64)
+// }
 
-    histogram.record(duration.as_micros() as f64)
-}
+// pub fn describe_metrics() {
+//     describe_counter!(METRIC_DISK_IO_OPERATION, "Disk I/O Operation Counter");
+//     describe_counter!(METRIC_VFS_FUSE_RPC, "fpp");
+//     describe_gauge!(
+//         METRIC_VFS_OPEN_FILE_HANDLES,
+//         "Open File Handles for VFS Objects"
+//     );
+//
+//     // Histograms
+//     describe_histogram!(
+//         METRIC_ERASURE_ENCODING_DURATION,
+//         "Erasure Encoding Duration"
+//     );
+// }
 
-pub fn describe_metrics() {
-    describe_counter!(METRIC_DISK_IO_OPERATION, "Disk I/O Operation Counter");
-    describe_counter!(METRIC_VFS_FUSE_RPC, "fpp");
-    describe_gauge!(
-        METRIC_VFS_OPEN_FILE_HANDLES,
-        "Open File Handles for VFS Objects"
-    );
-
-    // Histograms
-    describe_histogram!(
-        METRIC_ERASURE_ENCODING_DURATION,
-        "Erasure Encoding Duration"
-    );
-}
-
-pub struct MetricTracker {
-    entries: BTreeMap<Key, MetricType>
-}
-impl Recorder for MetricTracker {
-    fn describe_counter(&self, key: KeyName, unit: Option<Unit>, description: SharedString) {
-        todo!()
-    }
-
-    fn describe_gauge(&self, key: KeyName, unit: Option<Unit>, description: SharedString) {
-        todo!()
-    }
-
-    fn describe_histogram(&self, key: KeyName, unit: Option<Unit>, description: SharedString) {
-        todo!()
-    }
-
-    fn register_counter(&self, key: &Key, metadata: &Metadata<'_>) -> Counter {
-        todo!()
-    }
-
-    fn register_gauge(&self, key: &Key, metadata: &Metadata<'_>) -> Gauge {
-        todo!()
-    }
-
-    fn register_histogram(&self, key: &Key, metadata: &Metadata<'_>) -> Histogram {
-        todo!()
-    }
-}
-pub enum MetricType {
-    Counter(u64),
-    Gauge(f64),
-    Histogram(Vec<f64>)
-}
-impl MetricType {
-    pub fn reset(&mut self) {
-        match self {
-            MetricType::Counter(counter) => *counter = 0,
-            MetricType::Gauge(gauge) => *gauge = 0.0,
-            MetricType::Histogram(histogram) => histogram.clear(),
-        }
-    }
-}
+// pub struct MetricTracker {
+//     entries: BTreeMap<Key, MetricType>
+// }
+// impl Recorder for MetricTracker {
+//     fn describe_counter(&self, key: KeyName, unit: Option<Unit>, description: SharedString) {
+//         todo!()
+//     }
+//
+//     fn describe_gauge(&self, key: KeyName, unit: Option<Unit>, description: SharedString) {
+//         todo!()
+//     }
+//
+//     fn describe_histogram(&self, key: KeyName, unit: Option<Unit>, description: SharedString) {
+//         todo!()
+//     }
+//
+//     fn register_counter(&self, key: &Key, metadata: &Metadata<'_>) -> Counter {
+//         todo!()
+//     }
+//
+//     fn register_gauge(&self, key: &Key, metadata: &Metadata<'_>) -> Gauge {
+//         todo!()
+//     }
+//
+//     fn register_histogram(&self, key: &Key, metadata: &Metadata<'_>) -> Histogram {
+//         todo!()
+//     }
+// }
+// pub enum MetricType {
+//     Counter(u64),
+//     Gauge(f64),
+//     Histogram(Vec<f64>)
+// }
+// impl MetricType {
+//     pub fn reset(&mut self) {
+//         match self {
+//             MetricType::Counter(counter) => *counter = 0,
+//             MetricType::Gauge(gauge) => *gauge = 0.0,
+//             MetricType::Histogram(histogram) => histogram.clear(),
+//         }
+//     }
+// }

@@ -63,13 +63,8 @@ fn main() {
 
     let mount = config.mount_dir.clone();
     let fs = ShmrFs::new(config).unwrap();
-    let result = fuser::mount2(fs, mount, &options);
-    if let Err(e) = result {
-        // Return a special error code for permission denied, which usually indicates that
-        // "user_allow_other" is missing from /etc/fuse.conf
-        if e.kind() == ErrorKind::PermissionDenied {
-            error!("{}", e.to_string());
-            std::process::exit(2);
-        }
-    }
+    let result = fuser::spawn_mount2_threaded(fs, mount, &options, 8);
+
+    let handle = result.unwrap();
+    handle.guard.join();
 }

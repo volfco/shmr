@@ -102,13 +102,13 @@ impl VirtualFile {
         Ok(())
     }
 
-    /// Drop the Block Buffers. sync_data is called on each block before the buffer is dropped.
-    pub fn drop_buffers(&self) -> Result<(), ShmrError> {
-        for block in self.blocks.iter() {
-            block.drop_buffer()?;
-        }
-        Ok(())
-    }
+    // /// Drop the Block Buffers. sync_data is called on each block before the buffer is dropped.
+    // pub fn drop_buffers(&self) -> Result<(), ShmrError> {
+    //     for block in self.blocks.iter() {
+    //         block.drop_buffer()?;
+    //     }
+    //     Ok(())
+    // }
 
     /// Allocate a new StorageBlock then extend the chunk map
     fn allocate_block(&mut self) -> Result<(), ShmrError> {
@@ -130,9 +130,9 @@ impl VirtualFile {
         Ok(())
     }
 
-    pub fn iostat(&self) -> (Instant, usize, usize) {
-        self.io_stat.read()
-    }
+    // pub fn iostat(&self) -> (Instant, usize, usize) {
+    //     self.io_stat.read()
+    // }
 
     pub fn read(&self, pos: u64, buf: &mut [u8]) -> Result<usize, ShmrError> {
         if self.config.is_none() {

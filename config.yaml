@@ -1,49 +1,72 @@
 mount_dir: ./mnt
 metadata_dir: ./metadata
-metadata_format: yaml
 
 write_pool: pool0
-
+# cargo flamegraph --bin shmrd -c "record -e branch-misses -c 100 --call-graph lbr -g" -- --config config.yaml --verbosity 0
 # Disk Pools
 # Each pool can be considered a tier in the filesystem.
 # It is recommended that the write_pool be a standard RAID backed Filesystem, as shmr makes no attempt to ensure
 # redundancy in this pool by default.
 pools:
   pool0:
-    p0:
+    dir:
       path: ./pool0
-  pool1:
-    d0:
-      path: ./pool1/0
-    d1:
-      path: ./pool1/1
+#    0x500a0751e4c36034:
+#      path: /mnt/pool0/0x500a0751e4c36034
+#    0x5000c500db174f6f:
+#      path: /mnt/pool0/0x500a0751e4c357ef
+#    0x500a0751e4c3764f:
+#      path: /mnt/pool0/0x500a0751e4c3764f
 
-  pool2:
-    sda:
-      path: /mnt/sda
-    sdb:
-      path: /mnt/sdb
-    sdc:
-      path: /mnt/sdc
-    sdd:
-      path: /mnt/sdd
-    sde:
-      path: /mnt/sde
-    sdf:
-      path: /mnt/sdf
-    sdg:
-      path: /mnt/sdg
-    sdh:
-      path: /mnt/sdh
-
-#  ssd0:
-#    CT480BX500SSD1_2029E407F807: /mnt/by-id/ata-CT480BX500SSD1_2029E407F807
-#    CT480BX500SSD1_2029E407F808: /mnt/by-id/ata-CT480BX500SSD1_2029E407F806
-#    CT480BX500SSD1_2029E407F809: /mnt/by-id/ata-CT480BX500SSD1_2029E407F808
-#    CT480BX500SSD1_2029E407F810: /mnt/by-id/ata-CT480BX500SSD1_2029E407F809
-#    CT480BX500SSD1_2029E407F811: /mnt/by-id/ata-CT480BX500SSD1_2029E407F805
+#  pool1:
+#    0x50014ee65e4bb7bb:
+#      path: /mnt/pool1/0x50014ee65e4bb7bb
+#    0x5000c500db174f6f:
+#      path: /mnt/pool1/0x5000c500db174f6f
+#    0x5000c500c379f1df:
+#      path: /mnt/pool1/0x5000c500c379f1df
+#    0x5000c500aa91cad7:
+#      path: /mnt/pool1/0x5000c500aa91cad7
+#    0x5000c500a972cbe6:
+#      path: /mnt/pool1/0x5000c500a972cbe6
+#    0x5000c500a950d932:
+#      path: /mnt/pool1/0x5000c500a950d932
+#    0x5000c500e77dd231:
+#      path: /mnt/pool1/0x5000c500e77dd231
+#    0x5000c500e3fdc08d:
+#      path: /mnt/pool1/0x5000c500e3fdc08d
+#    0x5000c500d4f848f7:
+#      path: /mnt/pool1/0x5000c500d4f848f7
+#    0x5000c500a900253e:
+#      path: /mnt/pool1/0x5000c500a900253e
+#    0x5000c500e36ee781:
+#      path: /mnt/pool1/0x5000c500e36ee781
+#    0x5000c500dbaee076:
+#      path: /mnt/pool1/0x5000c500dbaee076
+#    0x50014ee2116f437b:
+#      path: /mnt/pool1/0x50014ee2116f437b
+#    0x50014ee65d9772af:
+#      path: /mnt/pool1/0x50014ee65d9772af
+#    0x5000c500b63c4461:
+#      path: /mnt/pool1/0x5000c500b63c4461
+#    0x50014ee65e4bb929:
+#      path: /mnt/pool1/0x50014ee65e4bb929
 #
-#  hdd:
+#  pool2:
+#    0x5000c500c414efa2:
+#      path: /mnt/pool2/0x5000c500c414efa2
+#    0x5000c500c414c8ba:
+#      path: /mnt/pool2/0x5000c500c414c8ba
+#    0x5000c500c40ec7cf:
+#      path: /mnt/pool2/0x5000c500c40ec7cf
+#    0x5000c500c41206c0:
+#      path: /mnt/pool2/0x5000c500c41206c0
+#    0x5000c500c414bffe:
+#      path: /mnt/pool2/0x5000c500c414bffe
+#    0x5000c500c40e4186:
+#      path: /mnt/pool2/0x5000c500c40e4186
+#    0x5000c500c4147016:
+#      path: /mnt/pool2/0x5000c500c4147016
 
 block_size: 32MB
 
