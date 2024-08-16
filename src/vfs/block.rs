@@ -227,6 +227,7 @@ impl VirtualBlock {
         let mut shards = vec![];
         for (i, bucket) in buckets.into_iter().enumerate() {
             // TODO need to add some randomness
+            // TODO funny enough, this takes up a notable amount of CPU during write operations
             let mut filename = ino.to_string();
             filename += ":";
             filename.push_str(&idx.to_string());
@@ -337,17 +338,25 @@ impl VirtualBlock {
             );
             let mut buffer = self.buffer.lock().unwrap();
 
+            let mut pos = pos as usize;
+
             // there are instances when the buffer has not been initialized, and we need to resize it.
             // only resize the buffer to the size of the incoming buffer, not the size of the block.
-            // the reasons is that if we zero-fill the entire buffer, we will write it all to disk-
-            // which can take up extra space.
-            // TODO this might have a big enough performance impact to warrant a better solution.
-            let ending_pos = pos as usize + buf.len();
+            // the reasons are that if we zero-fill the entire buffer, we will write it all to disk;
+            // which might be a waste of space.
+            let ending_pos = pos + buf.len();
             if buffer.len() < ending_pos {
                 buffer.resize(ending_pos, 0);
             }
 
-            buffer[(pos as usize)..ending_pos].copy_from_slice(buf);
+            for byte in buf {
+                buffer[pos] = *byte;
+                pos += 1;
+            }
+            // the above lines are faster than this??
+            // buffer[(pos as usize)..ending_pos].clone_from_slice(buf);
+            // do not try and parallelize: https://mastodon.gamedev.place/@rygorous/110024283538710700
+
             trace!(
                 "[{}:{:#016x}] update completed",
                 self.ino,

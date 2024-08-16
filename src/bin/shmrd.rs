@@ -1,9 +1,8 @@
 use clap::Parser;
 use fuser::MountOption;
-use log::{error, LevelFilter};
+use log::{LevelFilter};
 use shmr2::config::ShmrFsConfig;
 use shmr2::ShmrFs;
-use std::io::ErrorKind;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]

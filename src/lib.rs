@@ -18,6 +18,7 @@ mod iostat;
 pub mod tasks;
 mod types;
 mod vfs;
+mod slicepool;
 
 pub const VFS_DEFAULT_BLOCK_SIZE: u64 = 4096;
 

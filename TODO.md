@@ -1,7 +1,7 @@
 - [ ] add warning statements around get_mut and other write locks
 - idea: to improve read performance, we can have a read-ahead cache. This will read ahead a certain number of blocks
   and store them in the cache. This will improve read performance for sequential reads.
-  - 
+- Vec Buffer Resizes take up a notable amount of time. figure out how to reuse them
 - dbus implementations
   - Methods
     - co.volf.shmr.ShmrFs1
@@ -39,6 +39,7 @@
   kernel thread is running on, then prevent other processes from using it
 - shmr_crond daemon. runs housekeeping tasks and stuff via dbus calls
   - tombstone cleanup !!!
+- 
 - File Compression
 - [ ] Adopt https://github.com/mehcode/config-rs for config file
 - [ ] Need to handle open file limits

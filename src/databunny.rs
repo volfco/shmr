@@ -341,7 +341,7 @@ impl<
         &self,
         key: &K,
     ) -> Result<Option<ArcRwLockWriteGuard<RawRwLock, V>>, BunnyError> {
-        info!("getting read handle. locked = {}. exclusive = {}", self.entries.is_locked(), self.entries.is_locked_exclusive());
+        trace!("getting read handle. locked = {}. exclusive = {}", self.entries.is_locked(), self.entries.is_locked_exclusive());
         let entry_handle = self.entries.read();
 
         if let Some(entry) = entry_handle.get(key) {
