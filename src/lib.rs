@@ -8,7 +8,8 @@ use crate::types::SuperblockEntry;
 use dashmap::DashMap;
 use rand::Rng;
 use rlimit::Resource;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
+use crate::slicepool::SlicePool;
 
 pub mod config;
 mod databunny;
@@ -21,6 +22,13 @@ mod vfs;
 mod slicepool;
 
 pub const VFS_DEFAULT_BLOCK_SIZE: u64 = 4096;
+
+const PREALLOC_BUFFER_SIZE: usize = 1 * 1024 * 1024;  // 1MB
+const PREALLOC_BUFFER_TOTAL_SIZE: usize = 128;  // in MB
+
+static BUFFERS: LazyLock<SlicePool> = LazyLock::new(|| {
+    SlicePool::new(PREALLOC_BUFFER_SIZE, (PREALLOC_BUFFER_TOTAL_SIZE * 1024 * 1024) / PREALLOC_BUFFER_SIZE)
+});
 
 #[derive(Clone, Debug)]
 pub struct ShmrFs {
@@ -55,6 +63,9 @@ impl ShmrFs {
 
         let dbus_shmr = shmr.clone();
         std::thread::spawn(move || dbus::dbus_server(dbus_shmr));
+
+        // touch the BufferManager to pre-allocate buffers
+        let _ = (&*BUFFERS).stats();
 
         Ok(shmr)
     }

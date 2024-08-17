@@ -241,15 +241,15 @@ impl StorageBackend for SledBackend {
 pub enum BunnyError {
     EntryExists,
     IOError(std::io::Error),
-    SerializationError(serde_yaml::Error),
+    SerializationError(bitcode::Error),
 }
 impl From<std::io::Error> for BunnyError {
     fn from(value: std::io::Error) -> Self {
         BunnyError::IOError(value)
     }
 }
-impl From<serde_yaml::Error> for BunnyError {
-    fn from(value: serde_yaml::Error) -> Self {
+impl From<bitcode::Error> for BunnyError {
+    fn from(value: bitcode::Error) -> Self {
         BunnyError::SerializationError(value)
     }
 }
@@ -283,7 +283,7 @@ impl<
             entries_tree.insert(
                 K::from_bytes(record.0),
                 Arc::new(RwLock::new(
-                    serde_yaml::from_slice(record.1.as_slice()).unwrap(),
+                    bitcode::deserialize(record.1.as_slice())?,
                 )),
             );
         }
@@ -315,7 +315,7 @@ impl<
     }
 
     fn decode_entry(&self, buf: Vec<u8>) -> Result<V, BunnyError> {
-        Ok(serde_yaml::from_slice(&buf)?)
+        Ok(bitcode::deserialize(&buf)?)
     }
 
     /// Return a read-only copy of the Record
@@ -398,7 +398,7 @@ impl<
         let binding = binding.unwrap();
 
         let key = ident.to_string();
-        let val = serde_yaml::to_string(&*binding)?.as_bytes().to_vec();
+        let val = bitcode::serialize(&*binding)?;
 
         drop(binding);
 

@@ -15,9 +15,10 @@ use std::io::Read;
 use std::os::unix::prelude::FileExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::{cmp, mem};
 use std::{fmt, io};
+use crate::BUFFERS;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum BlockTopology {
@@ -250,7 +251,7 @@ impl VirtualBlock {
         }
 
         trace!("[{}:{:#016x}] VirtualBlock successfully created", ino, idx);
-
+        let buffer = (&*BUFFERS).recv(Duration::from_millis(100)).unwrap();
         Ok(Self {
             ino,
             idx,
@@ -261,7 +262,7 @@ impl VirtualBlock {
             buffer_loaded: Arc::new(AtomicBool::new(false)),
             shard_loaded: Arc::new(AtomicBool::new(false)),
             should_flush: Arc::new(AtomicBool::new(false)),
-            buffer: Arc::new(Mutex::new(vec![])),
+            buffer: Arc::new(Mutex::new(buffer)),
             pool_map: Some(config),
         })
     }
